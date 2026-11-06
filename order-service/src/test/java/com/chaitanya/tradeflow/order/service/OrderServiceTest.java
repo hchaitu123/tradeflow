@@ -48,4 +48,15 @@ class OrderServiceTest {
         assertEquals(OrderStatus.PENDING_RISK, response.status());
         assertEquals("INFY", response.symbol());
     }
+
+    @Test
+    void findById_whenOrderExists_returnsOrder(){
+        Order order = new Order(123L, "INFY", 10, new BigDecimal("1520.50"), OrderSide.BUY);
+        when(orderRepository.findById(29L)).thenReturn(Optional.of(order));
+
+        OrderResponse response = orderService.findById(29L);
+
+        assertEquals(OrderStatus.PENDING_RISK, response.status());
+        assertEquals("INFY", response.symbol());
+    }
 }
