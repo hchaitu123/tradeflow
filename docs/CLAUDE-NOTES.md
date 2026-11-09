@@ -68,6 +68,12 @@ fixed empty `<relativePath/>`, first push. Details in `session-01-setup.md`.
 - `OrderServiceTest` (Mockito, no Spring): not-found throws, create → PENDING_RISK, findById found → right symbol.
 - Created `NOTES.md` template for handwritten notes.
 
+### S5 — Sat 7 / Sun 8 Nov — Controller test + M1 close
+- `OrderServiceTest` + findById-found test; `OrderControllerTest` (`@WebMvcTest`): 404 on missing, 201 + body on create.
+- 6 tests green. Merged `m1-order-service` → `main`, tagged `m1`. **M1 DONE.**
+- M1 Q-bank: solid on Maven, BigDecimal, EnumType, status codes.
+  **Revise:** Q5 no-args constructor, Q7 constructor injection, Q8 `readOnly`, Q10 unit vs `@WebMvcTest`, bonus (validation belongs on the request DTO + `@Valid`).
+
 ---
 
 ## System design (what we're building)
