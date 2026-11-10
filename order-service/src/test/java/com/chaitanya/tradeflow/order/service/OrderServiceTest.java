@@ -1,10 +1,12 @@
 package com.chaitanya.tradeflow.order.service;
 
 import com.chaitanya.tradeflow.order.domain.Order;
+import com.chaitanya.tradeflow.order.domain.OrderItem;
 import com.chaitanya.tradeflow.order.domain.OrderSide;
 import com.chaitanya.tradeflow.order.domain.OrderStatus;
 import com.chaitanya.tradeflow.order.repo.OrderRepository;
 import com.chaitanya.tradeflow.order.web.dto.CreateOrderRequest;
+import com.chaitanya.tradeflow.order.web.dto.OrderItemRequest;
 import com.chaitanya.tradeflow.order.web.dto.OrderResponse;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -13,6 +15,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -39,24 +42,26 @@ class OrderServiceTest {
     void createOrder_setsStatusPendingRisk() {
         // Arrange: when save() is called with any Order, return that same order back
         when(orderRepository.save(any(Order.class))).thenAnswer(inv -> inv.getArgument(0));
-        CreateOrderRequest request = new CreateOrderRequest(123L, "INFY", 10, new BigDecimal("1520.50"), OrderSide.BUY);
+        CreateOrderRequest request = new CreateOrderRequest(123L, List.of(new OrderItemRequest("INFY", 10, new BigDecimal("1520.50"), OrderSide.BUY)));
 
         // Act
         OrderResponse response = orderService.createOrder(request);
 
         // Assert
         assertEquals(OrderStatus.PENDING_RISK, response.status());
-        assertEquals("INFY", response.symbol());
+        assertEquals("INFY", response.items().getFirst().symbol());
+        assertEquals(1, response.items().size());
     }
 
     @Test
     void findById_whenOrderExists_returnsOrder(){
-        Order order = new Order(123L, "INFY", 10, new BigDecimal("1520.50"), OrderSide.BUY);
+        Order order = new Order(123L);
+        order.addItem(new OrderItem("INFY", 10, new BigDecimal("1520.50"), OrderSide.BUY));
         when(orderRepository.findById(29L)).thenReturn(Optional.of(order));
 
         OrderResponse response = orderService.findById(29L);
 
         assertEquals(OrderStatus.PENDING_RISK, response.status());
-        assertEquals("INFY", response.symbol());
+        assertEquals("INFY", response.items().getFirst().symbol());
     }
 }

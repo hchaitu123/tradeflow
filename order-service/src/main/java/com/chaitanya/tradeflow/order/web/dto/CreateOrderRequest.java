@@ -1,9 +1,7 @@
 package com.chaitanya.tradeflow.order.web.dto;
 
-import com.chaitanya.tradeflow.order.domain.OrderSide;
+import java.util.List;
 
-import java.math.BigDecimal;
-
-public record CreateOrderRequest(Long accountId, String symbol, Integer quantity, BigDecimal price, OrderSide side) {
+public record CreateOrderRequest(Long accountId, List<OrderItemRequest> items) {
 
 }

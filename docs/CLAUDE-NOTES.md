@@ -74,6 +74,19 @@ fixed empty `<relativePath/>`, first push. Details in `session-01-setup.md`.
 - M1 Q-bank: solid on Maven, BigDecimal, EnumType, status codes.
   **Revise:** Q5 no-args constructor, Q7 constructor injection, Q8 `readOnly`, Q10 unit vs `@WebMvcTest`, bonus (validation belongs on the request DTO + `@Valid`).
 
+### M2-S1 — Mon 9 Nov — Postgres + dev profile
+- `docker-compose.yml` (postgres:17, named volume `pgdata`), `application-dev.yaml` (`ddl-auto: update`), postgresql driver (runtime).
+- Hit: YAML `volumes:` indented under `services`; **Homebrew postgres@14 already on 5432** → "Unable to determine Dialect" (really a failed login) → mapped Docker to **5433**; old IntelliJ run holding 8080.
+- Proved tests use H2 (default profile) and dev uses Postgres 17 via log lines. Data survives restart. Committed `935bfd3`.
+- Noted: `update` never drops columns → old symbol/price/... columns linger in `orders` (why prod = `validate` + Flyway).
+
+### M2-S2 — Tue 10 Nov — Order 1 → many OrderItem
+- `OrderItem` (`@ManyToOne(LAZY)`, `@JoinColumn("order_id")`, `@Column(nullable=false)`, package-private `setOrder`).
+- `Order`: `@OneToMany(mappedBy="order", cascade=ALL, orphanRemoval=true)`, `addItem` sets both sides, `getItems()` unmodifiable. No `OrderItemRepository` (aggregate root).
+- DTOs: `OrderItemRequest`, `OrderItemResponse.create(item)`, `OrderResponse` items via `stream().map(...).toList()`.
+- Break-it: removed cascade → POST 201 with `orderItemId: null`, GET → `items: []`, **no error**, unit tests still green (mocked repo). Lesson: cascade; GET-after-POST; limits of mock tests.
+- Concepts covered: aggregate root, cascade vs mapping, owning side (FK side), orphanRemoval vs cascade REMOVE, LAZY default for *ToOne = EAGER, LazyInitializationException + open-in-view, `.toList()` unmodifiable.
+
 ---
 
 ## System design (what we're building)

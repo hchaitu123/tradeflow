@@ -1,11 +1,13 @@
 package com.chaitanya.tradeflow.order.service;
 
 import com.chaitanya.tradeflow.order.domain.Order;
+import com.chaitanya.tradeflow.order.domain.OrderItem;
 import com.chaitanya.tradeflow.order.repo.OrderRepository;
 import com.chaitanya.tradeflow.order.web.dto.CreateOrderRequest;
 import com.chaitanya.tradeflow.order.web.dto.OrderResponse;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
 
 @Service
 public class OrderService {
@@ -30,7 +32,9 @@ public class OrderService {
     }
 
     private Order createOrderFromOrderRequest(CreateOrderRequest orderRequest) {
-        return new Order(orderRequest.accountId(), orderRequest.symbol(), orderRequest.quantity(), orderRequest.price(), orderRequest.side());
+       Order order = new Order(orderRequest.accountId());
+       orderRequest.items().forEach(i -> order.addItem(new OrderItem(i.symbol(), i.quantity(), i.price(), i.side())));
+        return order;
     }
 
 
