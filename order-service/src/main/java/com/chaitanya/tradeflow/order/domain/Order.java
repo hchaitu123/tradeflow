@@ -14,6 +14,8 @@ public class Order {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long orderId;
     private Long accountId;
+    @Version
+    private Long version;
 
     @Enumerated(EnumType.STRING)
     private OrderStatus status;
@@ -58,5 +60,14 @@ public class Order {
 
     public List<OrderItem> getItems() {
         return Collections.unmodifiableList(items);
+    }
+
+    public void approve() {
+        this.status = OrderStatus.APPROVED;
+    }
+
+    public void reject(String reason) {
+        this.status = OrderStatus.REJECTED;
+        this.rejectionReason = reason;
     }
 }
