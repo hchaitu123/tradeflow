@@ -5,6 +5,8 @@ import com.chaitanya.tradeflow.order.domain.OrderItem;
 import com.chaitanya.tradeflow.order.repo.OrderRepository;
 import com.chaitanya.tradeflow.order.web.dto.CreateOrderRequest;
 import com.chaitanya.tradeflow.order.web.dto.OrderResponse;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,6 +25,11 @@ public class OrderService {
         return orderRepository.findById(orderId)
                 .map(OrderResponse::create)
                 .orElseThrow(() -> new OrderNotFoundException(orderId));
+    }
+
+    @Transactional(readOnly = true)
+    public Page<OrderResponse> findByAccountId(Long accountId, Pageable pageable){
+        return orderRepository.findByAccountId(accountId,pageable).map(OrderResponse::create);
     }
 
     @Transactional

@@ -87,6 +87,14 @@ fixed empty `<relativePath/>`, first push. Details in `session-01-setup.md`.
 - Break-it: removed cascade → POST 201 with `orderItemId: null`, GET → `items: []`, **no error**, unit tests still green (mocked repo). Lesson: cascade; GET-after-POST; limits of mock tests.
 - Concepts covered: aggregate root, cascade vs mapping, owning side (FK side), orphanRemoval vs cascade REMOVE, LAZY default for *ToOne = EAGER, LazyInitializationException + open-in-view, `.toList()` unmodifiable.
 
+### M2-S3 — Wed 11 Nov — Validation + ProblemDetail
+- User couldn't recall the design answers without hands-on → switched to "do first, recall after" with more scaffolding. Works better for new topics.
+- `spring-boot-starter-validation`; `@NotNull/@NotEmpty @Valid` on `CreateOrderRequest`, `@NotBlank/@NotNull @Positive` on `OrderItemRequest`; `@Valid @RequestBody` in controller.
+- `web/GlobalExceptionHandler` (`@RestControllerAdvice`): `OrderNotFoundException` → 404 ProblemDetail; `MethodArgumentNotValidException` → 400 + `errors` map via `toMap(getField, getDefaultMessage, merge)`. Removed `@ResponseStatus` (no HTTP in service layer).
+- Postman: missing symbol / qty −5 / price 0 → 400 with all field errors at once; `items: []` → `items: must not be empty`.
+- New test `createOrder_withNegativeQuantity_returns400` + `verifyNoInteractions`. 7 tests green. Commit `d20377d`.
+- M1 backlog items for validation and error bodies are now fixed.
+
 ---
 
 ## System design (what we're building)
