@@ -19,6 +19,7 @@ import java.time.Instant;
 import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -66,5 +67,21 @@ class OrderControllerTest {
                 .andExpect(jsonPath("$.items[0].symbol").value("INFY"))
                 .andExpect(jsonPath("$.orderId").value(1))
                 .andExpect(jsonPath("$.status").value("PENDING_RISK"));
+    }
+
+    @Test
+    void createOrder_withNegativeQuantity_returns400() throws Exception {
+        String json = """
+        {
+          "accountId": 123,
+          "items": [ { "symbol": "INFY", "quantity": -5, "price": 1520.50, "side": "BUY" } ]
+        }
+        """;
+
+        mockMvc.perform(post("/orders").contentType(MediaType.APPLICATION_JSON).content(json))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors['items[0].quantity']").exists());
+
+        verifyNoInteractions(orderService);
     }
 }

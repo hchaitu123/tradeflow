@@ -3,6 +3,7 @@ package com.chaitanya.tradeflow.order.web;
 import com.chaitanya.tradeflow.order.service.OrderService;
 import com.chaitanya.tradeflow.order.web.dto.CreateOrderRequest;
 import com.chaitanya.tradeflow.order.web.dto.OrderResponse;
+import jakarta.validation.Valid;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -24,7 +25,7 @@ public class OrderController {
     }
 
     @PostMapping()
-    public ResponseEntity<OrderResponse> createOrder(@RequestBody CreateOrderRequest orderRequest){
+    public ResponseEntity<OrderResponse> createOrder(@Valid @RequestBody CreateOrderRequest orderRequest){
         OrderResponse order = orderService.createOrder(orderRequest);
         return new ResponseEntity<>(order,HttpStatusCode.valueOf(201) );
     }
