@@ -3,6 +3,7 @@ package com.chaitanya.tradeflow.order.web;
 import com.chaitanya.tradeflow.order.service.OrderService;
 import com.chaitanya.tradeflow.order.web.dto.CreateOrderRequest;
 import com.chaitanya.tradeflow.order.web.dto.OrderResponse;
+import com.chaitanya.tradeflow.order.web.dto.OrderSummaryResponse;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PagedModel;
@@ -35,5 +36,10 @@ public class OrderController {
     public ResponseEntity<OrderResponse> createOrder(@Valid @RequestBody CreateOrderRequest orderRequest){
         OrderResponse order = orderService.createOrder(orderRequest);
         return new ResponseEntity<>(order,HttpStatusCode.valueOf(201) );
+    }
+
+    @GetMapping("/summary")
+    public OrderSummaryResponse summary(@RequestParam Long accountId) {
+        return orderService.summary(accountId);
     }
 }

@@ -8,6 +8,7 @@ import com.chaitanya.tradeflow.order.repo.OrderRepository;
 import com.chaitanya.tradeflow.order.web.dto.CreateOrderRequest;
 import com.chaitanya.tradeflow.order.web.dto.OrderItemRequest;
 import com.chaitanya.tradeflow.order.web.dto.OrderResponse;
+import com.chaitanya.tradeflow.order.web.dto.OrderSummaryResponse;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -63,5 +64,28 @@ class OrderServiceTest {
 
         assertEquals(OrderStatus.PENDING_RISK, response.status());
         assertEquals("INFY", response.items().getFirst().symbol());
+    }
+
+    @Test
+    void summary_groupsOrdersAndItems() {
+        // order 1: still PENDING_RISK
+        Order o1 = new Order(123L);
+        o1.addItem(new OrderItem("INFY", 10, new BigDecimal("1500.00"), OrderSide.BUY));       // 15,000
+        o1.addItem(new OrderItem("RELIANCE", 50, new BigDecimal("2500.00"), OrderSide.SELL));  // 1,25,000 → large
+
+        // order 2: APPROVED
+        Order o2 = new Order(123L);
+        o2.addItem(new OrderItem("INFY", 5, new BigDecimal("1500.00"), OrderSide.BUY));        // 7,500
+        o2.approve();
+
+        when(orderRepository.findByAccountId(123L)).thenReturn(List.of(o1, o2));
+
+        OrderSummaryResponse s = orderService.summary(123L);
+
+        assertEquals(2L, s.totalOrders());
+        assertEquals(1L, s.ordersByStatus().get(OrderStatus.APPROVED));
+        assertEquals(2L, s.itemsBySide().get(OrderSide.BUY));
+        assertEquals(1L, s.largeItems().get(true));
+        assertEquals(0, new BigDecimal("22500").compareTo(s.notionalBySymbol().get("INFY")));
     }
 }

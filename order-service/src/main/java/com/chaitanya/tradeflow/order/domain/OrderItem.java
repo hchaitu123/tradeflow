@@ -59,4 +59,8 @@ public class OrderItem {
     public OrderSide getSide() {
         return side;
     }
+
+    public BigDecimal notional() {
+        return price.multiply(BigDecimal.valueOf(quantity));
+    }
 }
