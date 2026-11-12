@@ -1,9 +1,11 @@
 package com.chaitanya.tradeflow.order.web.dto;
 
-import com.chaitanya.tradeflow.order.domain.OrderSide;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotEmpty;
+import jakarta.validation.constraints.NotNull;
 
-import java.math.BigDecimal;
+import java.util.List;
 
-public record CreateOrderRequest(Long accountId, String symbol, Integer quantity, BigDecimal price, OrderSide side) {
+public record CreateOrderRequest(@NotNull Long accountId, @NotEmpty @Valid List<OrderItemRequest> items) {
 
 }

@@ -2,8 +2,10 @@ package com.chaitanya.tradeflow.order.domain;
 
 import jakarta.persistence.*;
 
-import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
 @Entity
 @Table(name = "orders")
@@ -12,29 +14,28 @@ public class Order {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long orderId;
     private Long accountId;
-    private String symbol;
-    private Integer quantity;
-    private BigDecimal price;
-
-    @Enumerated(EnumType.STRING)
-    private OrderSide side;
+    @Version
+    private Long version;
 
     @Enumerated(EnumType.STRING)
     private OrderStatus status;
     private String rejectionReason;
     private Instant createdAt;
+    @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<OrderItem> items = new ArrayList<>();
 
-    public Order(Long accountId, String symbol, Integer quantity, BigDecimal price, OrderSide side) {
+    public Order(Long accountId) {
         this.accountId = accountId;
-        this.symbol = symbol;
-        this.quantity = quantity;
-        this.price = price;
-        this.side = side;
         this.createdAt = Instant.now();
         this.status = OrderStatus.PENDING_RISK;
     }
 
     protected Order() {
+    }
+
+    public void addItem(OrderItem item){
+        item.setOrder(this);
+        items.add(item);
     }
 
     public Long getOrderId() {
@@ -43,22 +44,6 @@ public class Order {
 
     public Long getAccountId() {
         return accountId;
-    }
-
-    public String getSymbol() {
-        return symbol;
-    }
-
-    public Integer getQuantity() {
-        return quantity;
-    }
-
-    public BigDecimal getPrice() {
-        return price;
-    }
-
-    public OrderSide getSide() {
-        return side;
     }
 
     public OrderStatus getStatus() {
@@ -71,5 +56,18 @@ public class Order {
 
     public Instant getCreatedAt() {
         return createdAt;
+    }
+
+    public List<OrderItem> getItems() {
+        return Collections.unmodifiableList(items);
+    }
+
+    public void approve() {
+        this.status = OrderStatus.APPROVED;
+    }
+
+    public void reject(String reason) {
+        this.status = OrderStatus.REJECTED;
+        this.rejectionReason = reason;
     }
 }

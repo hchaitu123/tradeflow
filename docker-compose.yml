@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:17
+    container_name: tradeflow-postgres
+    environment:
+      POSTGRES_DB: tradeflow
+      POSTGRES_USER: tradeflow
+      POSTGRES_PASSWORD: tradeflow
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
+
