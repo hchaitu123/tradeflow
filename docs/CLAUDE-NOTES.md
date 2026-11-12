@@ -5,22 +5,23 @@ Session 1 detail: see `session-01-setup.md`.
 
 ---
 
-## Current state (as of Fri 6 Nov 2026)
+## Current state (as of Fri 13 Nov 2026)
 
-- Branch: `m1-order-service` (pushed). `main` = skeleton only. No tags yet.
-- Working API on H2: `POST /orders` → 201, `GET /orders/{id}` → 200 / 404.
-- Tests: 4 green (`contextLoads` + 3 Mockito tests in `OrderServiceTest`).
-- **M1 left:** `@WebMvcTest` for controller → `./mvnw verify` → merge to `main` → `git tag m1` → M1 Q-bank.
+- M1 merged + tagged `m1`. Branch `m2-postgres-domain`: all M2 features committed (last `9034a8b`).
+- **M2 left:** user writes NOTES.md M2 section → merge to `main` → `git tag m2` → M2 Q-bank.
+- API: `POST /orders` 201/400, `GET /orders/{id}` 200/404, `GET /orders?accountId=&page=&size=&sort=` (PagedModel),
+  `GET /orders/summary?accountId=`. Errors as ProblemDetail; 409 on optimistic-lock conflict.
+- Tests: 9 green. Dev = Postgres 17 in Docker on **5433** (IntelliJ "OrderService(dev)"); tests = H2.
 
 ### Code map (order-service)
 ```
 com.chaitanya.tradeflow.order
 ├── OrderServiceApplication       @SpringBootApplication (scan root)
-├── domain/  Order, OrderSide, OrderStatus
-├── repo/    OrderRepository       extends JpaRepository<Order, Long>
-├── service/ OrderService, OrderNotFoundException (@ResponseStatus 404)
-└── web/     OrderController
-    └── dto/ CreateOrderRequest, OrderResponse (records)
+├── domain/  Order (@Version, approve/reject, addItem), OrderItem (notional()), OrderSide, OrderStatus
+├── repo/    OrderRepository       findByAccountId(id, Pageable) + findByAccountId(id)
+├── service/ OrderService (findById, findByAccountId, createOrder, summary), OrderNotFoundException
+└── web/     OrderController, GlobalExceptionHandler (@RestControllerAdvice, 5 handlers)
+    └── dto/ CreateOrderRequest, OrderItemRequest, OrderResponse, OrderItemResponse, OrderSummaryResponse
 ```
 
 ---
@@ -95,6 +96,26 @@ fixed empty `<relativePath/>`, first push. Details in `session-01-setup.md`.
 - New test `createOrder_withNegativeQuantity_returns400` + `verifyNoInteractions`. 7 tests green. Commit `d20377d`.
 - M1 backlog items for validation and error bodies are now fixed.
 
+### M2-S4 — Wed 11 / Thu 12 Nov — Paging by account + N+1 + param errors
+- `GET /orders?accountId=` → `Page<Order> findByAccountId(Long, Pageable)` → `page.map(OrderResponse::create)` → `new PagedModel<>(...)` (stable JSON).
+- Hit: POSTs landed in H2 (IntelliJ "Current File" had no profile) → made "OrderService(dev)" run config with `SPRING_PROFILES_ACTIVE=dev`.
+- Saw **N+1**: 4 queries for a page of 2 orders → `hibernate.default_batch_fetch_size: 20` → 3 queries (`where order_id = any(?)`). JOIN FETCH + paging = in-memory paging, so avoided.
+- Missing `accountId` gave Spring's default error body → handlers for `MissingServletRequestParameterException` and `MethodArgumentTypeMismatchException` (`getName()`/`getValue()`). Commit `741e30c`.
+
+### M2-S5 — Thu 12 Nov — Optimistic locking
+- Reset DB (`docker compose down -v`) so `version` column starts clean.
+- `@Version Long version`; `approve()` / `reject(reason)` instead of setters.
+- `OrderOptimisticLockTest` (`@SpringBootTest`, **not** `@Transactional` — first-level cache would hand back the same object): two copies, save A, save B → `ObjectOptimisticLockingFailureException`.
+- Handler → 409. Commit `20dceee`.
+
+### M2-S6 — Fri 13 Nov — `GET /orders/summary` (Streams)
+- `OrderSummaryResponse` (Long counts — `counting()` returns Long; enum/Boolean keys).
+- `OrderItem.notional()`; service: `flatMap` items, `groupingBy(+counting)`, `groupingBy(+reducing(ZERO, notional, add))`, `partitioningBy(compareTo >= 0, counting)`. User's idea: `groupingBy` for side.
+- Bugs: `counting()` outside `groupingBy` (closed too early), `>0` outside the lambda, missing `counting()`, extra `)`. Tip: one argument per line.
+- Postman: empty account → `groupingBy` maps `{}`, `partitioningBy` → `{false:0, true:0}`. 200 not 404 (query result, not resource).
+- Mockito test (Claude filled 3 blanks on request); BigDecimal assert via `compareTo` (scale). 9 green. Commit `9034a8b`.
+- Caveat for interviews: in prod with big data, aggregate in SQL (`GROUP BY`), not in memory.
+
 ---
 
 ## System design (what we're building)
@@ -150,12 +171,14 @@ Not building: UI, market data, matching, payments, auth (until M8), market order
 
 ## M2 backlog (found by breaking things)
 
-- [ ] Missing symbol saved as null → `@NotBlank` + `@Valid`; `@Column(nullable = false)`
-- [ ] Negative quantity accepted → `@Positive`
-- [ ] Error bodies have no message → `@ControllerAdvice` + `ProblemDetail` (replace `@ResponseStatus` on exception)
-- [ ] Data lost on restart → Postgres in docker-compose; `ddl-auto` not create-drop
+- [x] Missing symbol saved as null → `@NotBlank` + `@Valid`; `@Column(nullable = false)`
+- [x] Negative quantity accepted → `@Positive`
+- [x] Error bodies have no message → `@ControllerAdvice` + `ProblemDetail` (replace `@ResponseStatus` on exception)
+- [x] Data lost on restart → Postgres in docker-compose; `ddl-auto` not create-drop
 - [ ] Price accepted as string `"90.90"` (lenient Jackson) — decide if strict
 - [ ] Optional polish: `ResponseEntity.ok(...)` / `HttpStatus.CREATED` instead of `HttpStatusCode.valueOf(...)`
+- [ ] M4: `approve()`/`reject()` only allowed from PENDING_RISK; Testcontainers instead of H2
+- [ ] Later: `ddl-auto: validate` + Flyway; OrderService cleanup (unused `Collectors` import, constant at top)
 
 ---
 
