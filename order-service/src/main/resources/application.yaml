@@ -10,6 +10,11 @@ spring:
       hibernate:
         format_sql: true
         default_batch_fetch_size: 20
+  kafka:
+    bootstrap-servers: localhost:9092
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JacksonJsonSerializer
   h2:
     console:
       enabled: true

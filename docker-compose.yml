@@ -10,6 +10,11 @@ services:
       - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+  kafka:
+    image: apache/kafka:4.1.0
+    container_name: tradeflow-kafka
+    ports:
+      - "9092:9092"
 
 volumes:
   pgdata:
