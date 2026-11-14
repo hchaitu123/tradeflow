@@ -78,4 +78,16 @@ public class OrderService {
         return new OrderSummaryResponse(accountId,
                 (long) orders.size(), byStatus, bySymbol, bySide, byLargeItems);
     }
+
+    @Transactional
+    public void applyRiskDecision(Long orderId, boolean approved, String reason) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new OrderNotFoundException(orderId));
+
+        if (approved) {
+            order.approve();
+        } else {
+            order.reject(reason);
+        }
+    }
 }
