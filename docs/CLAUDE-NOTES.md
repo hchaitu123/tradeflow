@@ -5,23 +5,28 @@ Session 1 detail: see `session-01-setup.md`.
 
 ---
 
-## Current state (as of Fri 13 Nov 2026)
+## Current state (as of Sun 15 Nov 2026)
 
-- M1 merged + tagged `m1`. Branch `m2-postgres-domain`: all M2 features committed (last `9034a8b`).
-- **M2 left:** user writes NOTES.md M2 section → merge to `main` → `git tag m2` → M2 Q-bank.
-- API: `POST /orders` 201/400, `GET /orders/{id}` 200/404, `GET /orders?accountId=&page=&size=&sort=` (PagedModel),
-  `GET /orders/summary?accountId=`. Errors as ProblemDetail; 409 on optimistic-lock conflict.
-- Tests: 9 green. Dev = Postgres 17 in Docker on **5433** (IntelliJ "OrderService(dev)"); tests = H2.
+- `m1`, `m2` tagged on `main`. Branch `m3-kafka`: M3 complete (last feature commit `401bce0`).
+- **M3 left:** user's NOTES.md M3 section → merge → `git tag m3` → M3 Q-bank. **Next: M4.**
+- Flow: `POST /orders` → saved PENDING_RISK → `orders.created` → risk-service rules → `orders.risk-decided` → order-service `approve()`/`reject()`.
+- Docker: Postgres 17 on **5433**, Kafka (apache/kafka:4.1.0, KRaft) on **9092**. Topics: `orders.created`, `orders.risk-decided` (3 partitions each).
+- Tests: order-service 11, risk-service 4 — all green. Commands cheat sheet: `docker-kafka-commands.md`.
 
-### Code map (order-service)
+### Code map
 ```
-com.chaitanya.tradeflow.order
-├── OrderServiceApplication       @SpringBootApplication (scan root)
-├── domain/  Order (@Version, approve/reject, addItem), OrderItem (notional()), OrderSide, OrderStatus
-├── repo/    OrderRepository       findByAccountId(id, Pageable) + findByAccountId(id)
-├── service/ OrderService (findById, findByAccountId, createOrder, summary), OrderNotFoundException
-└── web/     OrderController, GlobalExceptionHandler (@RestControllerAdvice, 5 handlers)
-    └── dto/ CreateOrderRequest, OrderItemRequest, OrderResponse, OrderItemResponse, OrderSummaryResponse
+order-service  com.chaitanya.tradeflow.order
+├── domain/   Order (@Version, approve/reject, addItem), OrderItem (notional()), OrderSide, OrderStatus
+├── repo/     OrderRepository
+├── service/  OrderService (findById, findByAccountId, createOrder→publish, summary, applyRiskDecision)
+├── event/    OrderCreatedEvent(+Item) [published], RiskDecidedEvent [consumed]
+├── listener/ RiskDecidedListener   @KafkaListener("orders.risk-decided")
+└── web/      OrderController, GlobalExceptionHandler, dto/
+
+risk-service   com.chaitanya.tradeflow.risk   (no web, no DB)
+├── event/    OrderCreatedEvent(+Item, side = String) [consumed], RiskDecidedEvent [published]
+├── rules/    RiskRules (symbol whitelist, 1..10,000 qty, order total ≤ ₹10,00,000), RiskDecision
+└── listener/ OrderCreatedListener   @KafkaListener("orders.created") → evaluate → send
 ```
 
 ---
@@ -136,6 +141,20 @@ Not building: UI, market data, matching, payments, auth (until M8), market order
 
 ---
 
+### M3 — Sat 14 / Sun 15 Nov — Kafka: order ↔ risk loop
+- Plan: weekend + 4 leave days; user kept step-by-step style; each step now opens with a one-line **Why**.
+- **Kafka by hand first:** compose service (KRaft, no ZooKeeper), topic with 3 partitions, console producer/consumer. Same key → same partition (123 and 456 also collided — different keys *may* share one).
+- **Producer (order-service):** `spring-boot-starter-kafka` (Boot 4 starter; plain `spring-kafka` skips auto-config). Key `StringSerializer` (String keys everywhere, readable in CLI), value `JacksonJsonSerializer` (Jackson 3). `OrderCreatedEvent.from(saved)` — event ≠ DTO: past-tense fact carrying what consumers need. `send` after `save` (id needed). Unit test: `@Mock KafkaTemplate` + `verify(...).send(eq(topic), any(), any(OrderCreatedEvent.class))`; `eq` from `ArgumentMatchers` (IntelliJ picked `AdditionalMatchers`).
+- **Break-it:** Kafka stopped → `send` blocks ~60 s (max.block.ms) → exception → rollback → no row, id 3 gap (sequences never roll back). Led to the **dual-write problem** → outbox in M5.
+- **risk-service module:** no web/DB. App exited immediately with no listener (nothing keeps JVM alive). Own copy of the event (`side` as String — tolerant reader). Consumer: `ErrorHandlingDeserializer` → `JacksonJsonDeserializer`, `use.type.headers: false` + `value.default.type` (answers "`__TypeId__` points to a class risk-service doesn't have"). Hit `NoClassDefFoundError tools/jackson/...` → needed `spring-boot-starter-jackson` (webmvc brought it in order-service).
+- Saw committed offsets: second run read nothing old — `auto-offset-reset` only applies when the group has no offset.
+- **Rules** as a pure class (no mocks needed). Bug: total check inside the item loop → moved out. Tests: boundary `MAX_QUANTITY + 1`, sum-only breach (5L + 6L), assert the **reason**.
+- **Decision back:** `RiskDecidedEvent` (new eventId; public contract ≠ internal `RiskDecision`) → `orders.risk-decided` (created explicitly with 3 partitions; broker auto-create would give 1).
+- **order-service consumer:** yaml first pointed at `risk.event.RiskDecidedEvent` (wrong app) → fixed. `applyRiskDecision` `@Transactional`, no `save()` — log showed `update … where order_id=? and version=?` from **dirty checking**; version 0 → 1.
+- Orders 2/4/5 stay PENDING_RISK (consumed before decisions existed) → replay via offset reset = optional exercise.
+- Live: POST → `PENDING_RISK`, GET right after → `APPROVED` = **eventual consistency**.
+- Also: `@Controller` used on a listener → `@Component`; package folder `rules/RiskDecision/` → `rules/`.
+
 ### Roadmap additions (agreed Sat 14 Nov) — to close microservices interview gaps
 - **M5:** Micrometer Tracing — one trace id across order → risk → order (Kafka headers), visible in logs.
 - **M8:** small **account-service** (`GET /accounts/{id}/limit`); risk-service calls it over REST, wrapped in a Resilience4j **circuit breaker** (gives M8 a real sync call to protect).
@@ -173,6 +192,10 @@ Not building: UI, market data, matching, payments, auth (until M8), market order
 - `new BigDecimal("1520.50")` not `new BigDecimal(1520.50)`.
 - `@Mock` = dependency (fake), `@InjectMocks` = class under test (real).
 - Boot 4: `@MockBean` removed → `@MockitoBean`; `@WebMvcTest` lives in `org.springframework.boot.webmvc.test.autoconfigure`.
+- Boot 4 Kafka: use `spring-boot-starter-kafka`; JSON needs Jackson on the classpath (`spring-boot-starter-jackson` if no web starter). `JacksonJsonSerializer/Deserializer` replace deprecated `JsonSerializer`.
+- `./mvnw -q dependency:tree` prints nothing (quiet hides INFO) — drop `-q`.
+- Read stack traces from the **last `Caused by`**; `ClassNotFoundException`/`NoClassDefFoundError` = missing dependency.
+- IntelliJ "Error unmarshaling return header / EOFException" on Maven reload = importer process crashed; reload again / invalidate caches.
 
 ---
 
@@ -204,6 +227,7 @@ Not building: UI, market data, matching, payments, auth (until M8), market order
 - `@RequestParam` vs `@PathVariable`? 200 vs 201 vs 404 vs 500?
 - Why a lambda in `assertThrows`? `thenReturn` vs `thenAnswer`? Limits of mock-based tests?
 - Which microservices patterns this project covers (and which it skips, and why).
+- M3: topic/partition/offset/consumer group; key → partition ordering; `auto-offset-reset`; at-least-once + idempotency; event vs DTO; why consumers own their copy of the event (`__TypeId__`); dual-write problem; eventual consistency; WAR-in-Tomcat vs embedded server; mock vs pure logic; `verify` for side effects; varargs.
 
 ---
 

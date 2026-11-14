@@ -96,4 +96,25 @@ class OrderServiceTest {
         assertEquals(1L, s.largeItems().get(true));
         assertEquals(0, new BigDecimal("22500").compareTo(s.notionalBySymbol().get("INFY")));
     }
+
+    @Test
+    void applyRiskDecision_approved_setsApproved() {
+        Order order = new Order(123L);
+        when(orderRepository.findById(9L)).thenReturn(Optional.of(order));
+
+        orderService.applyRiskDecision(9L, true, null);
+
+        assertEquals(OrderStatus.APPROVED, order.getStatus());
+    }
+
+    @Test
+    void applyRiskDecision_rejected_setsReasonAndStatus() {
+        Order order = new Order(123L);
+        when(orderRepository.findById(9L)).thenReturn(Optional.of(order));
+
+        orderService.applyRiskDecision(9L, false, "Symbol XYZ is not allowed");
+
+        assertEquals(OrderStatus.REJECTED, order.getStatus());
+        assertEquals("Symbol XYZ is not allowed", order.getRejectionReason());
+    }
 }
