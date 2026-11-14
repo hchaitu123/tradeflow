@@ -4,6 +4,7 @@ import com.chaitanya.tradeflow.order.domain.Order;
 import com.chaitanya.tradeflow.order.domain.OrderItem;
 import com.chaitanya.tradeflow.order.domain.OrderSide;
 import com.chaitanya.tradeflow.order.domain.OrderStatus;
+import com.chaitanya.tradeflow.order.event.OrderCreatedEvent;
 import com.chaitanya.tradeflow.order.repo.OrderRepository;
 import com.chaitanya.tradeflow.order.web.dto.CreateOrderRequest;
 import com.chaitanya.tradeflow.order.web.dto.OrderItemRequest;
@@ -14,6 +15,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.kafka.core.KafkaTemplate;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -21,7 +23,9 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -29,6 +33,9 @@ class OrderServiceTest {
 
     @Mock
     OrderRepository orderRepository;
+
+    @Mock
+    KafkaTemplate<String,Object> kafkaTemplate;
 
     @InjectMocks
     OrderService orderService;
@@ -52,6 +59,7 @@ class OrderServiceTest {
         assertEquals(OrderStatus.PENDING_RISK, response.status());
         assertEquals("INFY", response.items().getFirst().symbol());
         assertEquals(1, response.items().size());
+        verify(kafkaTemplate).send(eq("orders.created"), any(),any(OrderCreatedEvent.class));
     }
 
     @Test
@@ -87,5 +95,26 @@ class OrderServiceTest {
         assertEquals(2L, s.itemsBySide().get(OrderSide.BUY));
         assertEquals(1L, s.largeItems().get(true));
         assertEquals(0, new BigDecimal("22500").compareTo(s.notionalBySymbol().get("INFY")));
+    }
+
+    @Test
+    void applyRiskDecision_approved_setsApproved() {
+        Order order = new Order(123L);
+        when(orderRepository.findById(9L)).thenReturn(Optional.of(order));
+
+        orderService.applyRiskDecision(9L, true, null);
+
+        assertEquals(OrderStatus.APPROVED, order.getStatus());
+    }
+
+    @Test
+    void applyRiskDecision_rejected_setsReasonAndStatus() {
+        Order order = new Order(123L);
+        when(orderRepository.findById(9L)).thenReturn(Optional.of(order));
+
+        orderService.applyRiskDecision(9L, false, "Symbol XYZ is not allowed");
+
+        assertEquals(OrderStatus.REJECTED, order.getStatus());
+        assertEquals("Symbol XYZ is not allowed", order.getRejectionReason());
     }
 }

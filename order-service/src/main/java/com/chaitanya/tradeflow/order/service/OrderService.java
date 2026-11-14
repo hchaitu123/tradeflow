@@ -4,12 +4,14 @@ import com.chaitanya.tradeflow.order.domain.Order;
 import com.chaitanya.tradeflow.order.domain.OrderItem;
 import com.chaitanya.tradeflow.order.domain.OrderSide;
 import com.chaitanya.tradeflow.order.domain.OrderStatus;
+import com.chaitanya.tradeflow.order.event.OrderCreatedEvent;
 import com.chaitanya.tradeflow.order.repo.OrderRepository;
 import com.chaitanya.tradeflow.order.web.dto.CreateOrderRequest;
 import com.chaitanya.tradeflow.order.web.dto.OrderResponse;
 import com.chaitanya.tradeflow.order.web.dto.OrderSummaryResponse;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,9 +27,12 @@ public class OrderService {
 
     private final OrderRepository orderRepository;
     private static final BigDecimal LARGE_NOTIONAL = new BigDecimal("100000");
+    private static final String ORDERS_CREATED_TOPIC = "orders.created";
+    private final KafkaTemplate<String,Object> kafkaTemplate;
 
-    public OrderService(OrderRepository orderRepository) {
+    public OrderService(OrderRepository orderRepository, KafkaTemplate<String,Object> kafkaTemplate) {
         this.orderRepository = orderRepository;
+        this.kafkaTemplate = kafkaTemplate;
     }
 
     @Transactional(readOnly = true)
@@ -45,6 +50,7 @@ public class OrderService {
     @Transactional
     public OrderResponse createOrder(CreateOrderRequest orderRequest) {
         Order saved = orderRepository.save(createOrderFromOrderRequest(orderRequest));
+        kafkaTemplate.send(ORDERS_CREATED_TOPIC, String.valueOf(saved.getOrderId()), OrderCreatedEvent.from(saved));
         return OrderResponse.create(saved);
     }
 
@@ -55,13 +61,33 @@ public class OrderService {
     }
 
     @Transactional(readOnly = true)
-    public OrderSummaryResponse summary(Long accountId){
+    public OrderSummaryResponse summary(Long accountId) {
         List<Order> orders = orderRepository.findByAccountId(accountId);
         List<OrderItem> items = orders.stream().flatMap(order -> order.getItems().stream()).toList();
-        Map<OrderStatus,Long> byStatus = orders.stream().collect(groupingBy(Order::getStatus,counting()));
-        Map<String, BigDecimal> bySymbol = items.stream().collect(groupingBy(OrderItem::getSymbol,reducing(BigDecimal.ZERO, OrderItem::notional, BigDecimal::add)));
-        Map<OrderSide,Long> bySide = items.stream().collect(groupingBy(OrderItem::getSide,counting()));
-        Map<Boolean, Long> byLargeItems = items.stream().collect(partitioningBy(orderItem -> orderItem.notional().compareTo(LARGE_NOTIONAL)>=0,counting()));
-        return new OrderSummaryResponse(accountId,(long)orders.size(),byStatus,bySymbol,bySide,byLargeItems);
+
+        Map<OrderStatus, Long> byStatus = orders.stream().collect(groupingBy(Order::getStatus, counting()));
+
+        Map<String, BigDecimal> bySymbol = items.stream().collect(groupingBy(OrderItem::getSymbol,
+                reducing(BigDecimal.ZERO, OrderItem::notional, BigDecimal::add)));
+
+        Map<OrderSide, Long> bySide = items.stream().collect(groupingBy(OrderItem::getSide, counting()));
+
+        Map<Boolean, Long> byLargeItems = items.stream().collect(partitioningBy(
+                orderItem -> orderItem.notional().compareTo(LARGE_NOTIONAL) >= 0, counting()));
+
+        return new OrderSummaryResponse(accountId,
+                (long) orders.size(), byStatus, bySymbol, bySide, byLargeItems);
+    }
+
+    @Transactional
+    public void applyRiskDecision(Long orderId, boolean approved, String reason) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new OrderNotFoundException(orderId));
+
+        if (approved) {
+            order.approve();
+        } else {
+            order.reject(reason);
+        }
     }
 }
