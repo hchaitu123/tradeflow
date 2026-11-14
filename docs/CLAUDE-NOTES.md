@@ -136,6 +136,13 @@ Not building: UI, market data, matching, payments, auth (until M8), market order
 
 ---
 
+### Roadmap additions (agreed Sat 14 Nov) — to close microservices interview gaps
+- **M5:** Micrometer Tracing — one trace id across order → risk → order (Kafka headers), visible in logs.
+- **M8:** small **account-service** (`GET /accounts/{id}/limit`); risk-service calls it over REST, wrapped in a Resilience4j **circuit breaker** (gives M8 a real sync call to protect).
+- Theory only (final mock interview): API gateway, JWT/OAuth2, service discovery vs K8s DNS, saga compensation, CQRS, schema registry, contract tests.
+
+---
+
 ## Decisions log
 
 | Decision | Why |
