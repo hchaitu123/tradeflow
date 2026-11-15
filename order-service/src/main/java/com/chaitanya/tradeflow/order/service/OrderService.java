@@ -1,14 +1,14 @@
 package com.chaitanya.tradeflow.order.service;
 
-import com.chaitanya.tradeflow.order.domain.Order;
-import com.chaitanya.tradeflow.order.domain.OrderItem;
-import com.chaitanya.tradeflow.order.domain.OrderSide;
-import com.chaitanya.tradeflow.order.domain.OrderStatus;
+import com.chaitanya.tradeflow.order.domain.*;
 import com.chaitanya.tradeflow.order.event.OrderCreatedEvent;
 import com.chaitanya.tradeflow.order.repo.OrderRepository;
+import com.chaitanya.tradeflow.order.repo.ProcessedEventRepository;
 import com.chaitanya.tradeflow.order.web.dto.CreateOrderRequest;
 import com.chaitanya.tradeflow.order.web.dto.OrderResponse;
 import com.chaitanya.tradeflow.order.web.dto.OrderSummaryResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -18,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import static java.util.stream.Collectors.*;
 
@@ -29,10 +30,13 @@ public class OrderService {
     private static final BigDecimal LARGE_NOTIONAL = new BigDecimal("100000");
     private static final String ORDERS_CREATED_TOPIC = "orders.created";
     private final KafkaTemplate<String,Object> kafkaTemplate;
+    private final ProcessedEventRepository processedEventRepository;
+    private static final Logger log =LoggerFactory.getLogger(OrderService.class);
 
-    public OrderService(OrderRepository orderRepository, KafkaTemplate<String,Object> kafkaTemplate) {
+    public OrderService(OrderRepository orderRepository, KafkaTemplate<String,Object> kafkaTemplate, ProcessedEventRepository processedEventRepository) {
         this.orderRepository = orderRepository;
         this.kafkaTemplate = kafkaTemplate;
+        this.processedEventRepository =  processedEventRepository;
     }
 
     @Transactional(readOnly = true)
@@ -80,7 +84,11 @@ public class OrderService {
     }
 
     @Transactional
-    public void applyRiskDecision(Long orderId, boolean approved, String reason) {
+    public void applyRiskDecision(UUID eventId, Long orderId, boolean approved, String reason) {
+        if(processedEventRepository.existsById(eventId)){
+            log.info("Duplicate event {} for order {}, skipping", eventId, orderId);
+            return;
+        }
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new OrderNotFoundException(orderId));
 
@@ -89,5 +97,6 @@ public class OrderService {
         } else {
             order.reject(reason);
         }
+        processedEventRepository.save(new ProcessedEvent(eventId));
     }
 }

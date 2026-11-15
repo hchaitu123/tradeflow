@@ -6,6 +6,7 @@ import com.chaitanya.tradeflow.order.domain.OrderSide;
 import com.chaitanya.tradeflow.order.domain.OrderStatus;
 import com.chaitanya.tradeflow.order.event.OrderCreatedEvent;
 import com.chaitanya.tradeflow.order.repo.OrderRepository;
+import com.chaitanya.tradeflow.order.repo.ProcessedEventRepository;
 import com.chaitanya.tradeflow.order.web.dto.CreateOrderRequest;
 import com.chaitanya.tradeflow.order.web.dto.OrderItemRequest;
 import com.chaitanya.tradeflow.order.web.dto.OrderResponse;
@@ -20,19 +21,22 @@ import org.springframework.kafka.core.KafkaTemplate;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class OrderServiceTest {
 
     @Mock
     OrderRepository orderRepository;
+
+    @Mock
+    ProcessedEventRepository processedEventRepository;
 
     @Mock
     KafkaTemplate<String,Object> kafkaTemplate;
@@ -102,7 +106,7 @@ class OrderServiceTest {
         Order order = new Order(123L);
         when(orderRepository.findById(9L)).thenReturn(Optional.of(order));
 
-        orderService.applyRiskDecision(9L, true, null);
+        orderService.applyRiskDecision(UUID.randomUUID(),9L, true, null);
 
         assertEquals(OrderStatus.APPROVED, order.getStatus());
     }
@@ -112,9 +116,20 @@ class OrderServiceTest {
         Order order = new Order(123L);
         when(orderRepository.findById(9L)).thenReturn(Optional.of(order));
 
-        orderService.applyRiskDecision(9L, false, "Symbol XYZ is not allowed");
+        orderService.applyRiskDecision(UUID.randomUUID(),9L, false, "Symbol XYZ is not allowed");
 
         assertEquals(OrderStatus.REJECTED, order.getStatus());
         assertEquals("Symbol XYZ is not allowed", order.getRejectionReason());
+    }
+
+    @Test
+    void applyRiskDecision_duplicateEvent_isSkipped() {
+        UUID eventId = UUID.randomUUID();
+        when(processedEventRepository.existsById(eventId)).thenReturn(true);
+
+        orderService.applyRiskDecision(eventId, 9L, true, null);
+
+        verify(orderRepository, never()).findById(any());
+        verify(processedEventRepository, never()).save(any());
     }
 }

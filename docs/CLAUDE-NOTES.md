@@ -5,23 +5,25 @@ Session 1 detail: see `session-01-setup.md`.
 
 ---
 
-## Current state (as of Sun 15 Nov 2026)
+## Current state (as of Mon 16 Nov 2026)
 
-- `m1`, `m2` tagged on `main`. Branch `m3-kafka`: M3 complete (last feature commit `401bce0`).
-- **M3 left:** user's NOTES.md M3 section → merge → `git tag m3` → M3 Q-bank. **Next: M4.**
-- Flow: `POST /orders` → saved PENDING_RISK → `orders.created` → risk-service rules → `orders.risk-decided` → order-service `approve()`/`reject()`.
-- Docker: Postgres 17 on **5433**, Kafka (apache/kafka:4.1.0, KRaft) on **9092**. Topics: `orders.created`, `orders.risk-decided` (3 partitions each).
-- Tests: order-service 11, risk-service 4 — all green. Commands cheat sheet: `docker-kafka-commands.md`.
+- `m1`–`m3` tagged on `main`. Branch `m4-reliability`: M4 complete (last commit `9ccffe2`).
+- **M4 left:** user's NOTES.md M4 section → merge → `git tag m4` → M4 Q-bank. **Next: M5** (outbox, notification-service, tracing, Docker).
+- Flow: `POST /orders` → saved PENDING_RISK → `orders.created` → risk-service rules → `orders.risk-decided` → order-service (dedupe by eventId) → `approve()`/`reject()`. Failures → `orders.risk-decided.DLT`.
+- Docker: Postgres 17 on **5433**, Kafka (apache/kafka:4.1.0, KRaft) on **9092**. Topics: `orders.created`, `orders.risk-decided`, `orders.risk-decided.DLT` (3 partitions each).
+- Tests: order-service 15 (2 on Testcontainers Postgres + Kafka), risk-service 4 — all green. Docker must be running for `./mvnw verify`.
 
 ### Code map
 ```
 order-service  com.chaitanya.tradeflow.order
-├── domain/   Order (@Version, approve/reject, addItem), OrderItem (notional()), OrderSide, OrderStatus
-├── repo/     OrderRepository
-├── service/  OrderService (findById, findByAccountId, createOrder→publish, summary, applyRiskDecision)
+├── domain/   Order (@Version, approve/reject guarded by ensurePending), OrderItem, ProcessedEvent, OrderSide, OrderStatus
+├── repo/     OrderRepository, ProcessedEventRepository
+├── service/  OrderService (… createOrder→publish, summary, applyRiskDecision(eventId,…) idempotent)
 ├── event/    OrderCreatedEvent(+Item) [published], RiskDecidedEvent [consumed]
 ├── listener/ RiskDecidedListener   @KafkaListener("orders.risk-decided")
+├── config/   KafkaErrorHandlingConfig (DefaultErrorHandler: 1s×2 retries, IllegalStateException not retryable, DLT)
 └── web/      OrderController, GlobalExceptionHandler, dto/
+test: TestcontainersConfiguration (postgres:17 + apache/kafka:4.1.0, @ServiceConnection), RiskDecisionFlowTest (E2E)
 
 risk-service   com.chaitanya.tradeflow.risk   (no web, no DB)
 ├── event/    OrderCreatedEvent(+Item, side = String) [consumed], RiskDecidedEvent [published]
@@ -155,6 +157,18 @@ Not building: UI, market data, matching, payments, auth (until M8), market order
 - Live: POST → `PENDING_RISK`, GET right after → `APPROVED` = **eventual consistency**.
 - Also: `@Controller` used on a listener → `@Component`; package folder `rules/RiskDecision/` → `rules/`.
 
+### M4 — Sun 15 / Mon 16 Nov — Reliability
+- User felt less confident mid-way → full recap of M4 in one story + self-check questions helped; keep doing "recap when shaky".
+- **Status guard:** `Order.ensurePending()` → `IllegalStateException`; pure `OrderTest` (approve twice throws, status unchanged).
+- **Watched the default:** replayed decisions (stop app → `--reset-offsets --to-earliest` → start). `DefaultErrorHandler` default = `FixedBackOff(0, 9)` → 10 attempts → log + **skip (lost)**; whole consumer blocked meanwhile (head-of-line).
+- **Own handler:** `DeadLetterPublishingRecoverer` → `<topic>.DLT` same partition (DLT created with 3 partitions); `FixedBackOff(1000, 2)`; `addNotRetryableExceptions(IllegalStateException)` (classifier walks the `Caused by` chain). Replay → 4 msgs straight to DLT with headers (exception fqcn/cause/message/stacktrace, original topic/partition/offset as binary, consumer group).
+- **Poison pill:** `99:this is not json` → never reached the listener; `DeserializationException` → DLT, no retries. Value shown base64 (byte[] through JSON serializer) — backlog: byte-array serializer for DLT.
+- Insight: duplicates in the DLT = noise that buries real failures → **idempotency**.
+- **Idempotency:** `processed_events(event_id PK)`; `applyRiskDecision(eventId,…)`: `existsById` → log + return; else apply + save id in the **same transaction**. Unit test with `verify(..., never())`. Live replay: order 10 → `Duplicate event … skipping`; older events (pre-table) still DLT — idempotency only covers events processed after it exists.
+- **Testcontainers 2.x:** artifacts renamed `testcontainers-*`; `org.testcontainers.postgresql.PostgreSQLContainer` / `org.testcontainers.kafka.KafkaContainer` (not the old `containers.*`). `@ServiceConnection` wires URL/bootstrap servers. Real DB needs `ddl-auto=create-drop` (Boot defaults to `none` for non-embedded). Bug: image `postgres:tradeflow-postgres` (container name vs image tag). Saw H2 `enum` vs Postgres `varchar + check` — why test on the real DB.
+- **E2E `RiskDecisionFlowTest`:** create order → send `RiskDecidedEvent` via KafkaTemplate (plays risk-service) → Awaitility until APPROVED. Wrong auto-imports: Spring `AssertionErrors.assertEquals`, `org.testcontainers.shaded…awaitility` → JUnit + `org.awaitility`.
+- Noticed: `save()` on entity with assigned id does select-then-insert (merge) — `Persistable` = optional polish.
+
 ### Roadmap additions (agreed Sat 14 Nov) — to close microservices interview gaps
 - **M5:** Micrometer Tracing — one trace id across order → risk → order (Kafka headers), visible in logs.
 - **M8:** small **account-service** (`GET /accounts/{id}/limit`); risk-service calls it over REST, wrapped in a Resilience4j **circuit breaker** (gives M8 a real sync call to protect).
@@ -209,6 +223,10 @@ Not building: UI, market data, matching, payments, auth (until M8), market order
 - [ ] Optional polish: `ResponseEntity.ok(...)` / `HttpStatus.CREATED` instead of `HttpStatusCode.valueOf(...)`
 - [ ] M4: `approve()`/`reject()` only allowed from PENDING_RISK; Testcontainers instead of H2
 - [ ] Later: `ddl-auto: validate` + Flyway; OrderService cleanup (unused `Collectors` import, constant at top)
+- [x] M4: approve/reject only from PENDING_RISK; Testcontainers instead of H2 (for DB/Kafka tests)
+- [ ] DLT: byte-array serializer so poison-pill payloads aren't base64
+- [ ] `ProcessedEvent implements Persistable` to avoid select-before-insert
+- [ ] Hibernate Validator warning: move `@Valid` onto the list's type argument (`List<@Valid OrderItemRequest>`)
 
 ---
 
@@ -227,6 +245,7 @@ Not building: UI, market data, matching, payments, auth (until M8), market order
 - `@RequestParam` vs `@PathVariable`? 200 vs 201 vs 404 vs 500?
 - Why a lambda in `assertThrows`? `thenReturn` vs `thenAnswer`? Limits of mock-based tests?
 - Which microservices patterns this project covers (and which it skips, and why).
+- M4: transient vs permanent errors; retry + backoff; DLT + its headers; head-of-line blocking; poison pill; idempotent consumer (dedupe table, same txn); replay via offset reset (Kafka = log, not queue); invariants in the entity; Testcontainers + `@ServiceConnection`; Awaitility vs `Thread.sleep`; shaded/internal imports.
 - M3: topic/partition/offset/consumer group; key → partition ordering; `auto-offset-reset`; at-least-once + idempotency; event vs DTO; why consumers own their copy of the event (`__TypeId__`); dual-write problem; eventual consistency; WAR-in-Tomcat vs embedded server; mock vs pure logic; `verify` for side effects; varargs.
 
 ---

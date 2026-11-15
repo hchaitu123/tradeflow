@@ -21,6 +21,6 @@ public class RiskDecidedListener {
         log.info("Order {} → {} {}", event.orderId(),
                 event.approved() ? "APPROVED" : "REJECTED",
                 event.reason() == null ? "" : "(" + event.reason() + ")");
-        orderService.applyRiskDecision(event.orderId(), event.approved(), event.reason());
+        orderService.applyRiskDecision(event.eventId(), event.orderId(), event.approved(), event.reason());
     }
 }
