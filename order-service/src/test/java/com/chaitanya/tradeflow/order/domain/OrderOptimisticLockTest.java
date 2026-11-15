@@ -1,17 +1,20 @@
 package com.chaitanya.tradeflow.order.domain;
 
+import com.chaitanya.tradeflow.order.TestcontainersConfiguration;
 import com.chaitanya.tradeflow.order.repo.OrderRepository;
 import com.chaitanya.tradeflow.order.web.dto.OrderResponse;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 
 import java.math.BigDecimal;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-@SpringBootTest
+@SpringBootTest(properties = "spring.jpa.hibernate.ddl-auto=create-drop")
+@Import(TestcontainersConfiguration.class)
 public class OrderOptimisticLockTest {
 
     @Autowired
