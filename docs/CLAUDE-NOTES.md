@@ -223,6 +223,10 @@ Not building: UI, market data, matching, payments, auth (until M8), market order
 - [ ] Optional polish: `ResponseEntity.ok(...)` / `HttpStatus.CREATED` instead of `HttpStatusCode.valueOf(...)`
 - [ ] M4: `approve()`/`reject()` only allowed from PENDING_RISK; Testcontainers instead of H2
 - [ ] Later: `ddl-auto: validate` + Flyway; OrderService cleanup (unused `Collectors` import, constant at top)
+- [x] M4: approve/reject only from PENDING_RISK; Testcontainers instead of H2 (for DB/Kafka tests)
+- [ ] DLT: byte-array serializer so poison-pill payloads aren't base64
+- [ ] `ProcessedEvent implements Persistable` to avoid select-before-insert
+- [ ] Hibernate Validator warning: move `@Valid` onto the list's type argument (`List<@Valid OrderItemRequest>`)
 
 ---
 
