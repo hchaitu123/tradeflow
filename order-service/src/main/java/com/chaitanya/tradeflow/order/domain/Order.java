@@ -63,11 +63,20 @@ public class Order {
     }
 
     public void approve() {
+        ensurePending();
         this.status = OrderStatus.APPROVED;
     }
 
     public void reject(String reason) {
+        ensurePending();
         this.status = OrderStatus.REJECTED;
         this.rejectionReason = reason;
+    }
+
+    private void ensurePending() {
+        if (this.status != OrderStatus.PENDING_RISK) {
+            throw new IllegalStateException(
+                    "Order " + orderId + " is already " + this.getStatus() + ", cannot change it");
+        }
     }
 }
