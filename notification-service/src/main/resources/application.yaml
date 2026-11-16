@@ -2,6 +2,10 @@ spring:
   application:
     name: notification-service
   kafka:
+    template:
+      observation-enabled: true      # producer: write traceparent header
+    listener:
+      observation-enabled: true      # consumer: read traceparent header, continue
     bootstrap-servers: localhost:9092
     consumer:
       group-id: notification-service
@@ -12,3 +16,11 @@ spring:
         spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JacksonJsonDeserializer
         spring.json.use.type.headers: false
         spring.json.value.default.type: com.chaitanya.tradeflow.notification.event.RiskDecidedEvent
+management:
+  tracing:
+    sampling:
+      probability: 1.0               # 1.0 = trace every request (fine for dev; prod often 0.1)
+  otlp:
+    metrics:
+      export:
+        enabled: false
