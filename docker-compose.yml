@@ -28,6 +28,48 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_NUM_PARTITIONS: 3
+  order-service:
+    build:
+      context: .
+      args:
+        SERVICE: order-service
+    image: tradeflow/order-service
+    container_name: tradeflow-order-service
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_PROFILES_ACTIVE: dev
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/tradeflow
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    depends_on:
+      - postgres
+      - kafka
+    restart: on-failure
+  risk-service:
+    build:
+      context: .
+      args:
+        SERVICE: risk-service
+    image: tradeflow/risk-service
+    container_name: tradeflow-risk-service
+    environment:
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    depends_on:
+      - kafka
+    restart: on-failure
+
+  notification-service:
+    build:
+      context: .
+      args:
+        SERVICE: notification-service
+    image: tradeflow/notification-service
+    container_name: tradeflow-notification-service
+    environment:
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    depends_on:
+      - kafka
+    restart: on-failure
 
 volumes:
   pgdata:
