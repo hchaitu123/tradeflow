@@ -1,11 +1,8 @@
 package com.chaitanya.tradeflow.order.service;
 
-import com.chaitanya.tradeflow.order.domain.Order;
-import com.chaitanya.tradeflow.order.domain.OrderItem;
-import com.chaitanya.tradeflow.order.domain.OrderSide;
-import com.chaitanya.tradeflow.order.domain.OrderStatus;
-import com.chaitanya.tradeflow.order.event.OrderCreatedEvent;
+import com.chaitanya.tradeflow.order.domain.*;
 import com.chaitanya.tradeflow.order.repo.OrderRepository;
+import com.chaitanya.tradeflow.order.repo.OutboxEventRepository;
 import com.chaitanya.tradeflow.order.repo.ProcessedEventRepository;
 import com.chaitanya.tradeflow.order.web.dto.CreateOrderRequest;
 import com.chaitanya.tradeflow.order.web.dto.OrderItemRequest;
@@ -15,8 +12,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.kafka.core.KafkaTemplate;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -25,7 +23,6 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
@@ -39,7 +36,10 @@ class OrderServiceTest {
     ProcessedEventRepository processedEventRepository;
 
     @Mock
-    KafkaTemplate<String,Object> kafkaTemplate;
+    OutboxEventRepository outboxEventRepository;
+
+    @Spy
+    JsonMapper jsonMapper = new JsonMapper();
 
     @InjectMocks
     OrderService orderService;
@@ -63,7 +63,7 @@ class OrderServiceTest {
         assertEquals(OrderStatus.PENDING_RISK, response.status());
         assertEquals("INFY", response.items().getFirst().symbol());
         assertEquals(1, response.items().size());
-        verify(kafkaTemplate).send(eq("orders.created"), any(),any(OrderCreatedEvent.class));
+        verify(outboxEventRepository).save(any(OutboxEvent.class));
     }
 
     @Test
