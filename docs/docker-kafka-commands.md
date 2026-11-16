@@ -36,14 +36,56 @@ services:
       - pgdata:/var/lib/postgresql/data   # named volume → the folder where Postgres 17 keeps its data
 
   kafka:
-    image: apache/kafka:4.1.0        # official image; single-node KRaft (no ZooKeeper) by default
+    image: apache/kafka:4.1.0        # official image; single-node KRaft (no ZooKeeper)
     container_name: tradeflow-kafka
     ports:
-      - "9092:9092"                  # advertises localhost:9092 → works for apps on the Mac
+      - "9092:9092"                  # gate for the Mac → EXTERNAL listener
+    environment:                     # setting ANY KAFKA_* replaces the image defaults → full config
+      KAFKA_NODE_ID: 1                               # I am server no. 1
+      KAFKA_PROCESS_ROLES: broker,controller         # broker + my own manager (KRaft)
+      KAFKA_LISTENERS: EXTERNAL://:9092,INTERNAL://:29092,CONTROLLER://:9093   # doors opened inside the container
+      KAFKA_ADVERTISED_LISTENERS: EXTERNAL://localhost:9092,INTERNAL://kafka:29092  # "call me back at…"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: EXTERNAL:PLAINTEXT,INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093   # voters: id@host:port (3 servers → 3 entries)
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1      # 1 server → 1 copy of internal topics
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_NUM_PARTITIONS: 3                        # auto-created topics get 3 partitions
+
+  order-service:
+    build:                           # build the image from our Dockerfile
+      context: .                     #   folder Docker may COPY from (project root)
+      args:
+        SERVICE: order-service       #   fills ARG SERVICE in the Dockerfile
+    image: tradeflow/order-service   # name for the built image
+    container_name: tradeflow-order-service
+    ports:
+      - "8080:8080"                  # gate so curl from the Mac works
+    environment:                     # env vars override application*.yaml
+      SPRING_PROFILES_ACTIVE: dev
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/tradeflow   # house name + inner port
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092                        # Kafka's INSIDE line
+    depends_on: [postgres, kafka]    # start order only — NOT "wait until ready"
+    restart: on-failure              # so a too-early start just retries
+
+  # risk-service / notification-service: same, but no ports, no datasource, depends_on kafka only
 
 volumes:
   pgdata:                            # declare the named volume (top level, NOT under services)
 ```
+
+### Who uses which address (the "houses on a street" rule)
+`localhost` = the machine/container **where the command runs**. Containers find each other by **service name**.
+
+| Caller | Postgres | Kafka |
+|---|---|---|
+| Mac (IntelliJ, curl, psql on Mac) | `localhost:5433` | `localhost:9092` |
+| Another container (compose apps) | `postgres:5432` | `kafka:29092` |
+| `docker exec` inside that same container | `localhost:5432` | `localhost:9092` |
+
+`ports: "A:B"` = gate: Mac port A → container port B. Only needed when the **Mac** must reach the container.
 
 ---
 
@@ -165,7 +207,46 @@ docker exec -it tradeflow-kafka /opt/kafka/bin/kafka-consumer-groups.sh --bootst
 
 ---
 
-## 6. Helpers we used
+## 6. Building and running our own images (M5)
+
+```bash
+# build one image by hand
+docker build --build-arg SERVICE=order-service -t tradeflow/order-service .
+docker images | grep tradeflow
+
+# build + start everything in docker-compose.yml
+docker compose up -d --build
+
+# rebuild/restart just one service (e.g. after a code change)
+docker compose up -d --build order-service
+
+# recreate Kafka after changing its settings (⚠️ wipes topics — no volume)
+docker compose up -d kafka
+
+# logs: one container, follow live (Ctrl+C stops watching, not the container)
+docker logs -f tradeflow-order-service
+
+# logs: several services merged, each line prefixed with its service name
+docker compose logs order-service risk-service notification-service | grep -E "Outbox .* sent|→|Notify"
+
+# check the compose file without running anything
+docker compose config -q
+```
+
+| Part | Meaning |
+|---|---|
+| `--build-arg SERVICE=…` | value for `ARG SERVICE` in the Dockerfile |
+| `-t name` | tag (name) the image |
+| `.` (last arg) | build context = the folder Docker can `COPY` from (`.dockerignore` filters it) |
+| `--build` | rebuild images before starting, so the latest code is inside |
+| `-f` | follow logs live |
+| `config -q` | validate compose syntax, print nothing if OK |
+
+**Multi-stage Dockerfile:** stage 1 `FROM eclipse-temurin:21-jdk AS build` compiles (needs JDK); stage 2 `FROM eclipse-temurin:21-jre` only runs; `COPY --from=build` takes just the jar. Comments must be on their own line. `-DskipTests` because Testcontainers needs Docker, which isn't inside a build.
+
+---
+
+## 7. Helpers we used
 
 | Command | What it does |
 |---|---|
@@ -174,7 +255,7 @@ docker exec -it tradeflow-kafka /opt/kafka/bin/kafka-consumer-groups.sh --bootst
 
 ---
 
-## 7. Gotchas we hit
+## 8. Gotchas we hit
 
 - `volumes:` indented under `services:` → compose error. It must be top level.
 - Port already taken on the Mac → change the **left** number only (`5433:5432`).
@@ -182,3 +263,8 @@ docker exec -it tradeflow-kafka /opt/kafka/bin/kafka-consumer-groups.sh --bootst
 - `docker exec` command split across lines / pasted hidden characters → zsh parse errors. Type it on one line.
 - `down -v` wipes the DB. Plain `down` and `up -d` never do.
 - Ignore "What's next: Try Docker Debug…" — Docker advertising.
+- `FROM … AS build  # comment` → "FROM requires either one or three arguments". No trailing comments in Dockerfiles.
+- Writing your **own** service name as the host (`order-service:5432`) = calling your own house. Use the target's name.
+- Port 8080 already used by IntelliJ's order-service → container can't open its gate. Stop one of them.
+- Same app running in IntelliJ **and** Docker with the same group-id → they split partitions.
+- Container logs are UTC (`…Z`); Mac logs show `+05:30`.
