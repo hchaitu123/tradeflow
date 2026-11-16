@@ -3,6 +3,7 @@ package com.chaitanya.tradeflow.order.service;
 import com.chaitanya.tradeflow.order.domain.*;
 import com.chaitanya.tradeflow.order.event.OrderCreatedEvent;
 import com.chaitanya.tradeflow.order.repo.OrderRepository;
+import com.chaitanya.tradeflow.order.repo.OutboxEventRepository;
 import com.chaitanya.tradeflow.order.repo.ProcessedEventRepository;
 import com.chaitanya.tradeflow.order.web.dto.CreateOrderRequest;
 import com.chaitanya.tradeflow.order.web.dto.OrderResponse;
@@ -11,9 +12,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
-import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -29,14 +30,17 @@ public class OrderService {
     private final OrderRepository orderRepository;
     private static final BigDecimal LARGE_NOTIONAL = new BigDecimal("100000");
     private static final String ORDERS_CREATED_TOPIC = "orders.created";
-    private final KafkaTemplate<String,Object> kafkaTemplate;
     private final ProcessedEventRepository processedEventRepository;
     private static final Logger log =LoggerFactory.getLogger(OrderService.class);
+    private final OutboxEventRepository outboxEventRepository;
+    private final JsonMapper jsonMapper;      // import tools.jackson.databind.json.JsonMapper
 
-    public OrderService(OrderRepository orderRepository, KafkaTemplate<String,Object> kafkaTemplate, ProcessedEventRepository processedEventRepository) {
+    public OrderService(OrderRepository orderRepository, ProcessedEventRepository processedEventRepository,
+                        OutboxEventRepository outboxEventRepository,JsonMapper jsonMapper) {
         this.orderRepository = orderRepository;
-        this.kafkaTemplate = kafkaTemplate;
         this.processedEventRepository =  processedEventRepository;
+        this.outboxEventRepository = outboxEventRepository;
+        this.jsonMapper = jsonMapper;
     }
 
     @Transactional(readOnly = true)
@@ -54,7 +58,9 @@ public class OrderService {
     @Transactional
     public OrderResponse createOrder(CreateOrderRequest orderRequest) {
         Order saved = orderRepository.save(createOrderFromOrderRequest(orderRequest));
-        kafkaTemplate.send(ORDERS_CREATED_TOPIC, String.valueOf(saved.getOrderId()), OrderCreatedEvent.from(saved));
+        String payload = jsonMapper.writeValueAsString(OrderCreatedEvent.from(saved));
+        OutboxEvent outboxEvent = new OutboxEvent(ORDERS_CREATED_TOPIC,String.valueOf(saved.getOrderId()),payload);
+        outboxEventRepository.save(outboxEvent);
         return OrderResponse.create(saved);
     }
 

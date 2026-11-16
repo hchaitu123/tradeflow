@@ -5,20 +5,22 @@ Session 1 detail: see `session-01-setup.md`.
 
 ---
 
-## Current state (as of Mon 16 Nov 2026)
+## Current state (as of Mon 16 Nov 2026, night)
 
-- `m1`–`m3` tagged on `main`. Branch `m4-reliability`: M4 complete (last commit `9ccffe2`).
-- **M4 left:** user's NOTES.md M4 section → merge → `git tag m4` → M4 Q-bank. **Next: M5** (outbox, notification-service, tracing, Docker).
-- Flow: `POST /orders` → saved PENDING_RISK → `orders.created` → risk-service rules → `orders.risk-decided` → order-service (dedupe by eventId) → `approve()`/`reject()`. Failures → `orders.risk-decided.DLT`.
-- Docker: Postgres 17 on **5433**, Kafka (apache/kafka:4.1.0, KRaft) on **9092**. Topics: `orders.created`, `orders.risk-decided`, `orders.risk-decided.DLT` (3 partitions each).
-- Tests: order-service 15 (2 on Testcontainers Postgres + Kafka), risk-service 4 — all green. Docker must be running for `./mvnw verify`.
+- `m1`–`m4` tagged on `main`. Branch `m5-outbox`: M5 complete (last commit `cab354a`).
+- **M5 left:** user's NOTES.md M5 section → merge → `git tag m5` → M5 Q-bank (planned for Tue 17 revision day).
+- Flow: `POST /orders` → order + `outbox_events` row in **one txn** → `OutboxPublisher` (@Scheduled 1 s) → `orders.created` → risk-service → `orders.risk-decided` → order-service (dedupe by eventId → approve/reject) **and** notification-service (own group → log "📩 Notify"). Failures → `orders.risk-decided.DLT`.
+- **Everything runs in Docker:** `docker compose up -d --build` → postgres (5433), kafka (9092 Mac / 29092 containers), order-service (8080), risk-service, notification-service. One trace id across all 3 apps in logs.
+- Kafka has **no volume** → recreating the container wipes topics; they auto-create with 3 partitions (`KAFKA_NUM_PARTITIONS`).
+- Tests: order-service 15 (2 on Testcontainers), risk-service 4 — green. Docker must be running for `./mvnw verify`.
 
 ### Code map
 ```
 order-service  com.chaitanya.tradeflow.order
-├── domain/   Order (@Version, approve/reject guarded by ensurePending), OrderItem, ProcessedEvent, OrderSide, OrderStatus
-├── repo/     OrderRepository, ProcessedEventRepository
-├── service/  OrderService (… createOrder→publish, summary, applyRiskDecision(eventId,…) idempotent)
+├── domain/   Order (@Version, approve/reject guarded by ensurePending), OrderItem, ProcessedEvent, OutboxEvent, OrderSide, OrderStatus
+├── repo/     OrderRepository, ProcessedEventRepository, OutboxEventRepository (findTop100BySentAtIsNullOrderByIdAsc)
+├── service/  OrderService (createOrder → order + outbox row in one txn, summary, applyRiskDecision(eventId,…) idempotent)
+├── outbox/   OutboxPublisher  @Scheduled(fixedDelay=1000) @Transactional: send().join() → markSent(), break on failure
 ├── event/    OrderCreatedEvent(+Item) [published], RiskDecidedEvent [consumed]
 ├── listener/ RiskDecidedListener   @KafkaListener("orders.risk-decided")
 ├── config/   KafkaErrorHandlingConfig (DefaultErrorHandler: 1s×2 retries, IllegalStateException not retryable, DLT)
@@ -29,6 +31,12 @@ risk-service   com.chaitanya.tradeflow.risk   (no web, no DB)
 ├── event/    OrderCreatedEvent(+Item, side = String) [consumed], RiskDecidedEvent [published]
 ├── rules/    RiskRules (symbol whitelist, 1..10,000 qty, order total ≤ ₹10,00,000), RiskDecision
 └── listener/ OrderCreatedListener   @KafkaListener("orders.created") → evaluate → send
+
+notification-service  com.chaitanya.tradeflow.notification   (no web, no DB, consumer only)
+├── event/    RiskDecidedEvent [consumed]
+└── listener/ RiskDecidedListener   @KafkaListener("orders.risk-decided"), group notification-service → log
+
+root: Dockerfile (multi-stage, ARG SERVICE), .dockerignore, docker-compose.yml (5 services)
 ```
 
 ---
@@ -169,6 +177,17 @@ Not building: UI, market data, matching, payments, auth (until M8), market order
 - **E2E `RiskDecisionFlowTest`:** create order → send `RiskDecidedEvent` via KafkaTemplate (plays risk-service) → Awaitility until APPROVED. Wrong auto-imports: Spring `AssertionErrors.assertEquals`, `org.testcontainers.shaded…awaitility` → JUnit + `org.awaitility`.
 - Noticed: `save()` on entity with assigned id does select-then-insert (merge) — `Persistable` = optional polish.
 
+### M5 — Mon 16 Nov — Outbox, notification-service, tracing, Docker
+- **Outbox (A):** `OutboxEvent` (topic, messageKey, payload `text`, createdAt, nullable sentAt; `markSent()`). `createOrder` saves order + outbox row (JSON via `JsonMapper`) in one `@Transactional` — KafkaTemplate removed from OrderService. `OutboxPublisher` reads `sentAt IS NULL` oldest first, `readTree` → `JsonNode` (avoids double-encoded JSON string), `send().join()` then `markSent()`, `break` on failure (keeps order). Bugs: `createdAt` unset (NOT NULL), `@EnableScheduling` missing, **publisher not `@Component` → nothing ever polled** (diagnosed: no `select … outbox_events` in log).
+- **Break-it:** Kafka stopped → POST still instant 201, row waits, sent when Kafka returned → APPROVED. Publisher thread blocked ~45 s in `join()` (producer `max.block.ms` 60 s) → set `max.block.ms: 5000`. Turned `show-sql` off (scheduler query every second).
+- Test: `@Mock OutboxEventRepository` + `@Spy JsonMapper` (real JSON; a mock returns null) → `verify(outboxEventRepository).save(any(OutboxEvent.class))`. 15 green.
+- Theory: dual-write fixed by outbox; at-least-once (send succeeds, markSent commit fails → resend → consumers dedupe by eventId); multiple publisher instances → `FOR UPDATE SKIP LOCKED` / ShedLock; CDC (Debezium) instead of polling.
+- **notification-service (B):** copied module shape from risk-service. Bugs from copy-paste: main class kept `order` package/name, **yaml kept `group-id: order-service`** (would split partitions with order-service → some orders stuck PENDING) and `default.type` pointing at order's class; listener missing `@Component` (again). New group → `earliest` → replayed every past decision. Old M4 poison pills hit this group too: default handler skips `DeserializationException` without retry (no DLT here). Replay = duplicate notifications → real version needs idempotency (eventId store).
+- **Tracing (C):** Boot 4.1.2 BOM has `spring-boot-starter-opentelemetry` (Micrometer Tracing + OTel bridge); `spring.kafka.template/listener.observation-enabled: true` → `traceparent` header; `management.tracing.sampling.probability: 1.0`; `management.otlp.metrics.export.enabled: false`. Logs show `[traceId-spanId]`: same trace id across 3 services, new span id per hop. **Outbox breaks the chain**: HTTP request trace ≠ scheduler trace (context is thread-local, row doesn't store it) → fix = store `traceparent` in the outbox row and restore it on publish (not done; interview answer).
+- **Docker (D):** one root `Dockerfile`, multi-stage (`21-jdk AS build` → `./mvnw -pl $SERVICE -am package -DskipTests` with BuildKit cache mount → `21-jre` + `COPY --from=build` jar). Bugs: `jre` in build stage; inline `#` comment after `FROM` (my mistake — comments must be on their own line). `-DskipTests`: Testcontainers needs a Docker daemon, tests belong in CI.
+- User got lost at networking → re-explained with **houses on a street**: each container = a house, `localhost` = "my own house", service name = house name on the Docker network, `ports:` = gate from the Mac (left = Mac, right = container). Kafka = receptionist who says "call me back at X" (advertised listener) → two lines: EXTERNAL `localhost:9092` (Mac), INTERNAL `kafka:29092` (containers), CONTROLLER 9093. Setting any `KAFKA_*` env replaces the image defaults → full KRaft config. `docker exec` runs **inside** the container, so `localhost` there = that container.
+- Compose apps: env overrides yaml (`SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/…`, `SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:29092`, `SPRING_PROFILES_ACTIVE=dev`); `depends_on` = start order not readiness → `restart: on-failure`. Bug: first wrote `order-service:5432` / `order-service:29092` (own house). Mixed run (order in Docker, risk+notify in IntelliJ) proved both listeners at once; then all 5 in Docker: order 17 end-to-end, one trace id. Container logs in UTC (`Z`).
+
 ### Roadmap additions (agreed Sat 14 Nov) — to close microservices interview gaps
 - **M5:** Micrometer Tracing — one trace id across order → risk → order (Kafka headers), visible in logs.
 - **M8:** small **account-service** (`GET /accounts/{id}/limit`); risk-service calls it over REST, wrapped in a Resilience4j **circuit breaker** (gives M8 a real sync call to protect).
@@ -210,6 +229,11 @@ Not building: UI, market data, matching, payments, auth (until M8), market order
 - `./mvnw -q dependency:tree` prints nothing (quiet hides INFO) — drop `-q`.
 - Read stack traces from the **last `Caused by`**; `ClassNotFoundException`/`NoClassDefFoundError` = missing dependency.
 - IntelliJ "Error unmarshaling return header / EOFException" on Maven reload = importer process crashed; reload again / invalidate caches.
+- A class with `@Scheduled` / `@KafkaListener` / `@Transactional` but no `@Component` does nothing, silently — Spring only processes beans. (Hit twice in M5.)
+- Copying a module: check package, class name, `spring.application.name`, **group-id**, `default.type` — yaml mistakes compile fine and fail at runtime.
+- Dockerfile: no trailing comments (`FROM x AS build  # …` → "FROM requires either one or three arguments"). Build stage needs JDK, run stage JRE.
+- Inside a container `localhost` = that container. Use the compose service name + the container's own port.
+- Two YAML `spring:` keys → one silently wins. Merge into the existing block.
 
 ---
 
@@ -227,6 +251,10 @@ Not building: UI, market data, matching, payments, auth (until M8), market order
 - [ ] DLT: byte-array serializer so poison-pill payloads aren't base64
 - [ ] `ProcessedEvent implements Persistable` to avoid select-before-insert
 - [ ] Hibernate Validator warning: move `@Valid` onto the list's type argument (`List<@Valid OrderItemRequest>`)
+- [ ] Outbox: store `traceparent` in the row so the HTTP trace continues into Kafka
+- [ ] Outbox: cleanup job for sent rows; `SKIP LOCKED` if order-service scales out
+- [ ] notification-service: idempotency (eventId) before sending anything real
+- [ ] Kafka volume in compose (topics survive container recreate)
 
 ---
 
@@ -246,6 +274,7 @@ Not building: UI, market data, matching, payments, auth (until M8), market order
 - Why a lambda in `assertThrows`? `thenReturn` vs `thenAnswer`? Limits of mock-based tests?
 - Which microservices patterns this project covers (and which it skips, and why).
 - M4: transient vs permanent errors; retry + backoff; DLT + its headers; head-of-line blocking; poison pill; idempotent consumer (dedupe table, same txn); replay via offset reset (Kafka = log, not queue); invariants in the entity; Testcontainers + `@ServiceConnection`; Awaitility vs `Thread.sleep`; shaded/internal imports.
+- M5: dual-write + transactional outbox (polling vs CDC, at-least-once, SKIP LOCKED); fan-out with consumer groups / loose coupling; trace vs span, `traceparent` over Kafka headers, async hand-off breaks traces; multi-stage Dockerfile, JDK vs JRE, image vs container, `-DskipTests` in image builds; container networking (localhost, service-name DNS, port mapping); Kafka advertised listeners; env vars overriding Spring config; `depends_on` vs readiness.
 - M3: topic/partition/offset/consumer group; key → partition ordering; `auto-offset-reset`; at-least-once + idempotency; event vs DTO; why consumers own their copy of the event (`__TypeId__`); dual-write problem; eventual consistency; WAR-in-Tomcat vs embedded server; mock vs pure logic; `verify` for side effects; varargs.
 
 ---

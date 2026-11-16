@@ -2,6 +2,10 @@ spring:
   application:
     name: risk-service
   kafka:
+    template:
+      observation-enabled: true      # producer: write traceparent header
+    listener:
+      observation-enabled: true      # consumer: read traceparent header, continue
     bootstrap-servers: localhost:9092
     consumer:
       group-id: risk-service
@@ -15,3 +19,11 @@ spring:
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JacksonJsonSerializer
+management:
+  tracing:
+    sampling:
+      probability: 1.0
+  otlp:
+    metrics:
+      export:
+        enabled: false

@@ -4,17 +4,23 @@ spring:
   datasource:
     url: jdbc:h2:mem:tradeflow
   jpa:
-    show-sql: true
+    show-sql: false
     open-in-view: false
     properties:
       hibernate:
         format_sql: true
         default_batch_fetch_size: 20
   kafka:
+    template:
+      observation-enabled: true      # producer: write traceparent header
+    listener:
+      observation-enabled: true      # consumer: read traceparent header, continue
     bootstrap-servers: localhost:9092
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JacksonJsonSerializer
+      properties:
+        max.block.ms: 5000
     consumer:
       group-id: order-service
       auto-offset-reset: earliest
@@ -27,3 +33,11 @@ spring:
   h2:
     console:
       enabled: true
+management:
+  tracing:
+    sampling:
+      probability: 1.0               # 1.0 = trace every request (fine for dev; prod often 0.1)
+  otlp:
+    metrics:
+      export:
+        enabled: false
