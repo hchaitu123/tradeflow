@@ -30,6 +30,19 @@ spec:
           envFrom:
             - configMapRef:
                 name: kafka-config                       # the shared ConfigMap above
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8081
+            initialDelaySeconds: 10    # wait 10s after start before first check
+            periodSeconds: 5           # then check every 5s
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8081
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3        # 3 fails in a row → restart the pod
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -55,3 +68,16 @@ spec:
           envFrom:
             - configMapRef:
                 name: kafka-config
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8082
+            initialDelaySeconds: 10    # wait 10s after start before first check
+            periodSeconds: 5           # then check every 5s
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8082
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3        # 3 fails in a row → restart the pod

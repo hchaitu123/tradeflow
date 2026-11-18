@@ -32,6 +32,20 @@ spec:
           envFrom:
             - configMapRef:
                 name: order-service-config   # see note ②
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            initialDelaySeconds: 10    # wait 10s after start before first check
+            periodSeconds: 5           # then check every 5s
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3        # 3 fails in a row → restart the pod
+
 ---
 apiVersion: v1
 kind: Service
