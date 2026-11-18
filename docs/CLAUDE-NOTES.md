@@ -5,10 +5,11 @@ Session 1 detail: see `session-01-setup.md`.
 
 ---
 
-## Current state (as of Mon 16 Nov 2026, night)
+## Current state (as of Wed 18 Nov 2026, evening)
 
-- `m1`–`m4` tagged on `main`. Branch `m5-outbox`: M5 complete (last commit `cab354a`).
-- **M5 left:** user's NOTES.md M5 section → merge → `git tag m5` → M5 Q-bank (planned for Tue 17 revision day).
+- `m1`–`m5` tagged on `main`. Branch `m6-k8s`: M6 complete (manifests in `k8s/`), to merge + tag `m6`.
+- **Also runs on Kubernetes** (Docker Desktop, kubeadm): `kubectl apply -f k8s/` → namespace `tradeflow`, postgres, kafka, order-service (+ Service), risk-service ×2, notification-service. Mac access via `kubectl port-forward -n tradeflow svc/order-service 8090:8080`.
+- Revision (Tue 17) paused after M3 block; M4 block Qs posted, M5 block + re-test still owed. Weak list: `docs/revision-weak-list.md`.
 - Flow: `POST /orders` → order + `outbox_events` row in **one txn** → `OutboxPublisher` (@Scheduled 1 s) → `orders.created` → risk-service → `orders.risk-decided` → order-service (dedupe by eventId → approve/reject) **and** notification-service (own group → log "📩 Notify"). Failures → `orders.risk-decided.DLT`.
 - **Everything runs in Docker:** `docker compose up -d --build` → postgres (5433), kafka (9092 Mac / 29092 containers), order-service (8080), risk-service, notification-service. One trace id across all 3 apps in logs.
 - Kafka has **no volume** → recreating the container wipes topics; they auto-create with 3 partitions (`KAFKA_NUM_PARTITIONS`).
@@ -27,16 +28,18 @@ order-service  com.chaitanya.tradeflow.order
 └── web/      OrderController, GlobalExceptionHandler, dto/
 test: TestcontainersConfiguration (postgres:17 + apache/kafka:4.1.0, @ServiceConnection), RiskDecisionFlowTest (E2E)
 
-risk-service   com.chaitanya.tradeflow.risk   (no web, no DB)
+risk-service   com.chaitanya.tradeflow.risk   (no DB; web+actuator only for health probes, port 8081)
 ├── event/    OrderCreatedEvent(+Item, side = String) [consumed], RiskDecidedEvent [published]
 ├── rules/    RiskRules (symbol whitelist, 1..10,000 qty, order total ≤ ₹10,00,000), RiskDecision
 └── listener/ OrderCreatedListener   @KafkaListener("orders.created") → evaluate → send
 
-notification-service  com.chaitanya.tradeflow.notification   (no web, no DB, consumer only)
+notification-service  com.chaitanya.tradeflow.notification   (no DB, consumer only; web+actuator for probes, port 8082)
 ├── event/    RiskDecidedEvent [consumed]
 └── listener/ RiskDecidedListener   @KafkaListener("orders.risk-decided"), group notification-service → log
 
 root: Dockerfile (multi-stage, ARG SERVICE), .dockerignore, docker-compose.yml (5 services)
+k8s/: 00-namespace, 10-postgres (Deployment+Service), 20-kafka (Deployment+Service, INTERNAL kafka:29092 only),
+      30-order-service (ConfigMap+Deployment+Service, probes), 40-consumers (shared kafka-config ConfigMap, risk ×2, notification)
 ```
 
 ---
@@ -188,6 +191,16 @@ Not building: UI, market data, matching, payments, auth (until M8), market order
 - User got lost at networking → re-explained with **houses on a street**: each container = a house, `localhost` = "my own house", service name = house name on the Docker network, `ports:` = gate from the Mac (left = Mac, right = container). Kafka = receptionist who says "call me back at X" (advertised listener) → two lines: EXTERNAL `localhost:9092` (Mac), INTERNAL `kafka:29092` (containers), CONTROLLER 9093. Setting any `KAFKA_*` env replaces the image defaults → full KRaft config. `docker exec` runs **inside** the container, so `localhost` there = that container.
 - Compose apps: env overrides yaml (`SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/…`, `SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:29092`, `SPRING_PROFILES_ACTIVE=dev`); `depends_on` = start order not readiness → `restart: on-failure`. Bug: first wrote `order-service:5432` / `order-service:29092` (own house). Mixed run (order in Docker, risk+notify in IntelliJ) proved both listeners at once; then all 5 in Docker: order 17 end-to-end, one trace id. Container logs in UTC (`Z`).
 
+### Tue 17 Nov — Revision day (partial)
+- Blank-page drawing 7/10 (DLT on wrong topic, idempotency vs status guard merged, "same transaction" missing). M1+M2 14/20, M3 12/16. Weak items tracked in `docs/revision-weak-list.md`. Paused before M4 block to start M6.
+
+### M6 — Wed 18 Nov — Kubernetes (Docker Desktop, kubeadm)
+- User new to K8s → explained as **city manager + wish list** (YAML), Deployment = manager keeping N pods alive, Service = **restaurant phone number** (pods get new IPs; Service name is stable, finds pods by **label**), namespace = floor/folder, ConfigMap = **SIM card** for the same phone (Deployment). kubectl came with Docker Desktop (symlink). Chose **kubeadm** over kind: shares Docker's image store → `imagePullPolicy: Never` with local `tradeflow/*:latest`.
+- **B:** risk + notification got `spring-boot-starter-webmvc` + `actuator` (probes need HTTP) and ports 8081/8082; `management.endpoint.health.probes.enabled: true` in all 3. Bugs: `server:` nested under `spring:` (ignored); Compose containers had vanished → order-service "Connection to localhost:5433 refused"; IntelliJ ran stale classpath until **Maven reload**.
+- **C:** namespace (first wrote `kind: Kubeadm`), postgres Deployment+Service (no volume — data lost on pod restart; real = managed DB / StatefulSet+PV). Self-healing demo: `kubectl delete pod -l app=postgres` → new pod, new IP, same Service IP. Kafka: only INTERNAL `kafka:29092` (+ CONTROLLER, voters `1@localhost:9093`), `enableServiceLinks: false` (Service named `kafka` injects `KAFKA_PORT…` env vars the image would read as config), env values must be quoted strings.
+- **D/E:** order-service ConfigMap (`SPRING_DATASOURCE_URL=…postgres:5432…`, `SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:29092`, profile dev) via `envFrom.configMapRef`; Service 8080. Consumers share one `kafka-config` ConfigMap and have **no Service** (nobody calls them). `kubectl port-forward … 8090:8080` (8080 busy by IntelliJ). Orders 1 (AAPL → REJECTED, not whitelisted) and 2 (INFY → APPROVED) end-to-end in the cluster; same trace id across 3 services.
+- **F:** readiness (10 s / 5 s) + liveness (30 s / 10 s / 3 fails) on `/actuator/health/{readiness,liveness}`; bug: livenessProbe indented under readinessProbe. Apply → **rolling update** (new pod ready → old removed; pod-name hash = template version). `replicas: 2` on risk → rebalance: `[0,1]` + `[2]`. order-service **not** scaled: each pod's `OutboxPublisher` would send the same unsent rows (needs SKIP LOCKED / ShedLock).
+
 ### Roadmap additions (agreed Sat 14 Nov) — to close microservices interview gaps
 - **M5:** Micrometer Tracing — one trace id across order → risk → order (Kafka headers), visible in logs.
 - **M8:** small **account-service** (`GET /accounts/{id}/limit`); risk-service calls it over REST, wrapped in a Resilience4j **circuit breaker** (gives M8 a real sync call to protect).
@@ -234,6 +247,14 @@ Not building: UI, market data, matching, payments, auth (until M8), market order
 - Dockerfile: no trailing comments (`FROM x AS build  # …` → "FROM requires either one or three arguments"). Build stage needs JDK, run stage JRE.
 - Inside a container `localhost` = that container. Use the compose service name + the container's own port.
 - Two YAML `spring:` keys → one silently wins. Merge into the existing block.
+- `server.port` is top-level; under `spring:` it's silently ignored.
+- Changed a pom? IntelliJ keeps the old classpath until **Reload All Maven Projects** — check the `-classpath` line in the run log.
+- K8s: `kind:` = object type (Namespace, Deployment, Service, ConfigMap) — not the cluster provisioner. Writing a file changes nothing until `kubectl apply`. Forgetting `-n tradeflow` looks at `default` → "No resources found".
+- K8s env `value:` must be a string (`"1"`). `:latest` defaults to `imagePullPolicy: Always` → `ErrImagePull` for local-only images.
+- K8s Service named `kafka` + apache/kafka image → set `enableServiceLinks: false`.
+- YAML indentation = ownership: a probe indented one level too far becomes a child of the other probe.
+- Editing a ConfigMap does **not** restart pods; `kubectl rollout restart deploy/<name>`.
+- `port-forward` attaches to one pod; it dies when that pod is replaced.
 
 ---
 
@@ -275,6 +296,7 @@ Not building: UI, market data, matching, payments, auth (until M8), market order
 - Which microservices patterns this project covers (and which it skips, and why).
 - M4: transient vs permanent errors; retry + backoff; DLT + its headers; head-of-line blocking; poison pill; idempotent consumer (dedupe table, same txn); replay via offset reset (Kafka = log, not queue); invariants in the entity; Testcontainers + `@ServiceConnection`; Awaitility vs `Thread.sleep`; shaded/internal imports.
 - M5: dual-write + transactional outbox (polling vs CDC, at-least-once, SKIP LOCKED); fan-out with consumer groups / loose coupling; trace vs span, `traceparent` over Kafka headers, async hand-off breaks traces; multi-stage Dockerfile, JDK vs JRE, image vs container, `-DskipTests` in image builds; container networking (localhost, service-name DNS, port mapping); Kafka advertised listeners; env vars overriding Spring config; `depends_on` vs readiness.
+- M6: Docker vs Kubernetes; pod / Deployment / ReplicaSet / Service / namespace / ConfigMap vs Secret; labels + selectors; ClusterIP vs NodePort/LoadBalancer/Ingress, port vs targetPort vs containerPort, port-forward; imagePullPolicy + registries; liveness vs readiness (restart vs stop traffic) and why liveness waits longer; rolling update / zero downtime; self-healing; scaling consumers vs partitions (rebalance, idle extra pods); why a scheduled outbox publisher can't simply be scaled (SKIP LOCKED / ShedLock / leader election); stateful DB on K8s (StatefulSet + PV vs managed DB).
 - M3: topic/partition/offset/consumer group; key → partition ordering; `auto-offset-reset`; at-least-once + idempotency; event vs DTO; why consumers own their copy of the event (`__TypeId__`); dual-write problem; eventual consistency; WAR-in-Tomcat vs embedded server; mock vs pure logic; `verify` for side effects; varargs.
 
 ---

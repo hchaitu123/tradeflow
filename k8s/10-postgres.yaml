@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: tradeflow
+spec:
+  replicas: 1                 # how many pods
+  selector:
+    matchLabels:
+      app: postgres             # "I manage pods with this label"
+  template:                     # the blueprint for each pod
+    metadata:
+      labels:
+        app: postgres           # the label stuck on each pod
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17     # same as in docker-compose
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: tradeflow
+            - name: POSTGRES_USER
+              value: tradeflow
+            - name: POSTGRES_PASSWORD
+              value: tradeflow
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres              # the stable name other pods will use
+  namespace: tradeflow
+spec:
+  selector:
+    app: postgres             # send traffic to pods with this label
+  ports:
+    - port: 5432                # the Service's port
+      targetPort: 5432          # the container's port

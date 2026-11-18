@@ -1,0 +1,60 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: order-service-config
+  namespace: tradeflow
+data:
+  SPRING_PROFILES_ACTIVE: dev
+  SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/tradeflow     # which Service name?
+  SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092                        # which Service name?
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-service
+  namespace: tradeflow
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: order-service
+  template:
+    metadata:
+      labels:
+        app: order-service
+    spec:
+      containers:
+        - name: order-service
+          image: tradeflow/order-service:latest
+          imagePullPolicy: Never          # see note ①
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: order-service-config   # see note ②
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            initialDelaySeconds: 10    # wait 10s after start before first check
+            periodSeconds: 5           # then check every 5s
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3        # 3 fails in a row → restart the pod
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-service
+  namespace: tradeflow
+spec:
+  selector:
+    app: order-service
+  ports:
+    - port: 8080
+      targetPort: 8080
