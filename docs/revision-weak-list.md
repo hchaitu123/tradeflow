@@ -19,3 +19,4 @@ Answer shape: **What → Why (problem) → How in TradeFlow → Trade-off**.
 | 9 | Offset = position of a message **in a partition**; committed offset = a **group's** progress per partition; `auto-offset-reset` applies **only when the group has no committed offset** | Wed 18 (M3 Q1, Q6) | 1 | open |
 | 10 | Fan-out: each service gets every message because they use **different group ids**; each group keeps its own offsets (same group = split) | Wed 18 (M3 Q5) | 1 | open |
 | 11 | Own event class per service: no shared jar → **deploy independently**, contract = the JSON, not a Java class; trade-off = drift → schema registry | Wed 18 (M3 Q7) | 1 | open |
+| 12 | Outbox with 2+ order-service pods: both publishers read the same unsent rows → duplicate `orders.created` → risk sends 2 decisions with **new eventIds** → dedupe misses → 2nd hits `ensurePending` → DLT. Fix: `FOR UPDATE SKIP LOCKED` / ShedLock / CDC | Wed 18 (M6 F2) | 1 | open |
