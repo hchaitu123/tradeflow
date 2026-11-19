@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]          # ① which branch should be checked on every push?
+  pull_request:
+    branches: [ main ]          # every PR into main gets checked too
+
+jobs:
+  build:
+    runs-on: ubuntu-latest               # ② GitHub's Linux machine (hint: ubuntu-…)
+    steps:
+      - uses: actions/checkout@v4          # copy the code onto the machine
+
+      - uses: actions/setup-java@v4        # install Java
+        with:
+          distribution: temurin
+          java-version: '21'             # ③ our Java version
+          cache: maven                      # ④ which build tool's downloads to remember between runs
+
+      - name: Build and test
+        run: ./mvnw -B verify                # ⑤ the Maven phase that compiles + runs ALL tests
