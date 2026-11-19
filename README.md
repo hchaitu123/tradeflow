@@ -1,0 +1,1 @@
+![CI](https://github.com/hchaitu123/tradeflow/actions/workflows/ci.yml/badge.svg)
