@@ -6,7 +6,7 @@ Everything lives in the namespace `tradeflow`, so most commands need `-n tradefl
 ## Picture
 
 ```
-Mac ──port-forward 8090:8080──► Service order-service ──label app=order-service──► pod(s)
+Mac localhost:8090 ──LoadBalancer──► Service order-service ──label app=order-service──► pod(s)
                                        ▲ stable name + port         ▲ kept alive by the Deployment
 inside the cluster: order-service → postgres:5432, kafka:29092 (Service names)
 ```
@@ -64,17 +64,19 @@ kubectl exec -n tradeflow deploy/order-service -- printenv | grep SPRING
 kubectl exec -n tradeflow deploy/kafka -- /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --list
 ```
 
-## Reach it from the Mac (temporary gate, left = Mac, right = Service)
+## Reach it from the Mac
 
-```bash
-kubectl port-forward -n tradeflow svc/order-service 8090:8080
-```
+order-service is a **LoadBalancer** Service on port 8090 → Docker Desktop opens `localhost:8090`
+permanently (Postman: `http://localhost:8090/orders`). Full flow + diagrams: `kubernetes-flow.md`.
+
 ```bash
 curl -s -X POST localhost:8090/orders -H "Content-Type: application/json" -d '{"accountId":1,"items":[{"symbol":"INFY","quantity":10,"price":1500.00,"side":"BUY"}]}'
 ```
+Other Services are ClusterIP (inside only) → temporary gate, left = Mac, right = Service:
 ```bash
 kubectl port-forward -n tradeflow svc/postgres 5434:5432   # DB from DBeaver/psql (5433 may be Compose's)
 ```
+"address already in use" → find who holds the port: `lsof -nP -iTCP:8090 -sTCP:LISTEN`.
 Allowed symbols: INFY, TCS, RELIANCE, HDFCBANK, ITC (anything else → REJECTED).
 
 ## Self-healing, scaling, restarts
