@@ -53,8 +53,9 @@ metadata:
   name: order-service
   namespace: tradeflow
 spec:
+  type: LoadBalancer      # ← here
   selector:
     app: order-service
   ports:
-    - port: 8080
+    - port: 8090
       targetPort: 8080
