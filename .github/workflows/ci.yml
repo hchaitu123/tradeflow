@@ -20,3 +20,18 @@ jobs:
 
       - name: Build and test
         run: ./mvnw -B verify                # ⑤ the Maven phase that compiles + runs ALL tests
+  docker:
+    needs: build                       # ① which job must pass first?
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [ order-service, risk-service, notification-service ] # ② our 3 service folder names
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image ${{ matrix.service }}
+        run: >
+          docker build
+          --build-arg SERVICE=${{ matrix.service }}
+          -t tradeflow/${{ matrix.service }}:${{ github.sha }}
+          .
