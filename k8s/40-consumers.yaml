@@ -30,6 +30,9 @@ spec:
           envFrom:
             - configMapRef:
                 name: kafka-config                       # the shared ConfigMap above
+          env:
+            - name: ACCOUNT_SERVICE_URL
+              value: "http://account-service:8083"          # ⑦ the K8s Service name
           readinessProbe:
             httpGet:
               path: /actuator/health/readiness

@@ -30,4 +30,18 @@ public class RiskRules {
         }
         return RiskDecision.approve();
     }
+
+    public RiskDecision evaluate(OrderCreatedEvent event, BigDecimal accountLimit) {
+        RiskDecision basic = evaluate(event);          // symbol, qty, ₹10L checks first
+        if (!basic.approved()) {                           // ⑥ if the basic checks already said no…
+            return basic;
+        }
+        BigDecimal total = event.items().stream()
+                .map(i -> i.price().multiply(BigDecimal.valueOf(i.quantity())))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        if (total.compareTo(accountLimit) > 0) {               // ⑦ compare with what?
+            return RiskDecision.reject("Order value " + total + " exceeds account limit " + accountLimit);
+        }
+        return RiskDecision.approve();
+    }
 }

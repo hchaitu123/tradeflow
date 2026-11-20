@@ -5,10 +5,11 @@ Session 1 detail: see `session-01-setup.md`.
 
 ---
 
-## Current state (as of Thu 19 Nov 2026)
+## Current state (as of Fri 20 Nov 2026)
 
-- `m1`–`m6` tagged on `main`. **M7 (CI) merged** (PR #1 workflow, PR #2 README badge); tag `m7` to add.
-- **CI:** `.github/workflows/ci.yml` on push to main + every PR → job `build` (`./mvnw -B verify`, Java 21 temurin, maven cache, Testcontainers works on ubuntu-latest) → job `docker` (`needs: build`, matrix of 3 services, `docker build --build-arg SERVICE=… -t tradeflow/<svc>:<sha> .`, build only, no push). Ruleset `protect-main`: PR required (0 approvals), all 4 checks required, no force push/deletion.
+- `m1`–`m7` tagged on `main`. Branch `m8-account-cb`: M8 done (account-service + circuit breaker), to PR + tag `m8`.
+- **M8:** new `account-service` (8083, no DB, in-memory limits: acct 1 = ₹5,00,000, acct 2 = ₹50,000, else 404). risk-service calls it per order via `RestClient` (`AccountClient`, `account-service.url`, connect 1 s / read 2 s) wrapped in Resilience4j `@CircuitBreaker(name="account")` → fallback limit 0 → REJECT (fail closed). Breaker: window 5, min 3 calls, 50 %, OPEN 10 s, 2 half-open calls; visible at `:8081/actuator/circuitbreakers` and `/circuitbreakerevents/account`.
+- **CI:** `.github/workflows/ci.yml` on push to main + every PR → job `build` (`./mvnw -B verify`, Java 21 temurin, maven cache, Testcontainers works on ubuntu-latest) → job `docker` (`needs: build`, matrix of 4 services, `docker build --build-arg SERVICE=… -t tradeflow/<svc>:<sha> .`, build only, no push). Ruleset `protect-main`: PR required (0 approvals), all 4 checks required, no force push/deletion.
 - **Also runs on Kubernetes** (Docker Desktop, kubeadm): `kubectl apply -f k8s/` → namespace `tradeflow`, postgres, kafka, order-service (+ Service), risk-service ×2, notification-service. Mac access: order-service Service `type: LoadBalancer` → `localhost:8090` (→ pod 8080).
 - Revision (Tue 17) paused after M3 block; M4 block Qs posted, M5 block + re-test still owed. Weak list: `docs/revision-weak-list.md`.
 - Flow: `POST /orders` → order + `outbox_events` row in **one txn** → `OutboxPublisher` (@Scheduled 1 s) → `orders.created` → risk-service → `orders.risk-decided` → order-service (dedupe by eventId → approve/reject) **and** notification-service (own group → log "📩 Notify"). Failures → `orders.risk-decided.DLT`.
@@ -38,9 +39,14 @@ notification-service  com.chaitanya.tradeflow.notification   (no DB, consumer on
 ├── event/    RiskDecidedEvent [consumed]
 └── listener/ RiskDecidedListener   @KafkaListener("orders.risk-decided"), group notification-service → log
 
-root: Dockerfile (multi-stage, ARG SERVICE), .dockerignore, docker-compose.yml (5 services)
+account-service com.chaitanya.tradeflow.account   (no DB, no Kafka; port 8083)
+└── web/      AccountController GET /accounts/{id}/limit, AccountLimitResponse
+risk-service also: client/ AccountClient (@CircuitBreaker + limitFallback), AccountLimit; RiskRules.evaluate(event, accountLimit) overload
+
+root: Dockerfile (multi-stage, ARG SERVICE, copies all 4 module poms), .dockerignore, docker-compose.yml (5 services)
 k8s/: 00-namespace, 10-postgres (Deployment+Service), 20-kafka (Deployment+Service, INTERNAL kafka:29092 only),
-      30-order-service (ConfigMap+Deployment+Service, probes), 40-consumers (shared kafka-config ConfigMap, risk ×2, notification)
+      30-order-service (ConfigMap+Deployment+Service LoadBalancer 8090→8080, probes), 40-consumers (shared kafka-config ConfigMap, risk ×2 + env ACCOUNT_SERVICE_URL, notification),
+      50-account-service (Deployment + ClusterIP Service 8083)
 ```
 
 ---
@@ -209,6 +215,13 @@ Not building: UI, market data, matching, payments, auth (until M8), market order
 - Docker job: `needs` = **relay baton**, `matrix` = **photocopier** (one job, 3 parallel copies). Bug: `--build-arg service=` lowercase → `ARG SERVICE` empty → `COPY /src` fails; build args are case-sensitive. Explained build context `.`, `-t name:${{ github.sha }}` (commit id beats `latest`), `run: >` folding. User asked for a slow walk-through of the docker build line → **recipe card with one blank** analogy, unrolled the matrix into 3 real commands, compared with compose `build.context/args/image`.
 - Branch protection via ruleset; README created on main by mistake (staged, not committed) → moved with `git checkout -b`. `gh pr merge` while checks pending → "base branch policy prohibits the merge" ✅; explained `--auto` (merge when green) vs `--admin` (bypass — don't).
 
+### M8 — Fri 20 Nov — account-service + Resilience4j circuit breaker
+- Framed as **letters (Kafka) vs phone call (REST)**; danger = cascading failure; breaker = **house fuse box** (CLOSED / OPEN / HALF_OPEN), fallback = backup answer, **fail closed** for money. Breaker name = label on the fuse switch, links annotation ↔ yaml `instances.<name>`.
+- Bugs: `@RequestParam` for a path value (repeat of M1 gotcha) → `@PathVariable`; `starter-web` instead of **`starter-restclient`** (Boot 4: RestClient.Builder lives there); `starter-aop` (doesn't exist in Boot 4.1) → **`starter-aspectj`**; blank breaker name; `BigDecimal.Zero` → `ZERO`; Compose + K8s `ACCOUNT_SERVICE_URL` set to `localhost` and put on account-service instead of risk; K8s Service missing; **Dockerfile didn't COPY `account-service/pom.xml`** → every image failed "Child module … does not exist".
+- Break-first demo (no breaker): Kafka default handler = 10 tries in ~5 s (`FixedBackOff 0, 9`), then skipped → order 21 stuck `PENDING_RISK` forever.
+- With breaker (IntelliJ): order 22 REJECTED limit 0, one try; 3rd failure → `FAILURE_RATE_EXCEEDED` → OPEN; next call `NOT_PERMITTED` (`CallNotPermittedException`); 10 s → HALF_OPEN; failed tests → OPEN again; account-service back → 2 SUCCESS → CLOSED. Also shown in Compose (orders 33–35) and K8s (orders 5–6 rejected by account limit, served by new risk pods after rolling restart).
+- User ran Compose (8080) and K8s (8090) side by side and got confused which one answered → explained two separate worlds, separate DB/Kafka/order ids.
+
 ### Roadmap additions (agreed Sat 14 Nov) — to close microservices interview gaps
 - **M5:** Micrometer Tracing — one trace id across order → risk → order (Kafka headers), visible in logs.
 - **M8:** small **account-service** (`GET /accounts/{id}/limit`); risk-service calls it over REST, wrapped in a Resilience4j **circuit breaker** (gives M8 a real sync call to protect).
@@ -265,6 +278,10 @@ Not building: UI, market data, matching, payments, auth (until M8), market order
 - `port-forward` attaches to one pod; it dies when that pod is replaced.
 - GitHub Actions: `runs-on` must be a real label (`ubuntu-latest`); `setup-java cache:` takes `maven`, not a command. Workflow must live exactly in `.github/workflows/`.
 - Docker `--build-arg` names are case-sensitive; an unknown arg is only a warning, the real `ARG` stays empty.
+- New Maven module = update **root pom `<modules>` + Dockerfile `COPY <module>/pom.xml` + CI matrix**.
+- Boot 4 starters: `starter-restclient` (outgoing HTTP), `starter-aspectj` (AOP; `starter-aop` is gone). Resilience4j: `resilience4j-spring-boot4:2.4.0` (version not managed by Boot).
+- Fallback method: same params + trailing `Throwable`, same return type. Breaker name must match yaml `instances.<name>` or defaults (window 100, 60 s) silently apply.
+- Don't put the circuit breaker health in the liveness group — a down dependency would restart healthy pods.
 - Uncommitted changes follow you across `git checkout -b` — easy fix for "edited on main by mistake".
 
 ---
@@ -308,6 +325,7 @@ Not building: UI, market data, matching, payments, auth (until M8), market order
 - M4: transient vs permanent errors; retry + backoff; DLT + its headers; head-of-line blocking; poison pill; idempotent consumer (dedupe table, same txn); replay via offset reset (Kafka = log, not queue); invariants in the entity; Testcontainers + `@ServiceConnection`; Awaitility vs `Thread.sleep`; shaded/internal imports.
 - M5: dual-write + transactional outbox (polling vs CDC, at-least-once, SKIP LOCKED); fan-out with consumer groups / loose coupling; trace vs span, `traceparent` over Kafka headers, async hand-off breaks traces; multi-stage Dockerfile, JDK vs JRE, image vs container, `-DskipTests` in image builds; container networking (localhost, service-name DNS, port mapping); Kafka advertised listeners; env vars overriding Spring config; `depends_on` vs readiness.
 - M6: Docker vs Kubernetes; pod / Deployment / ReplicaSet / Service / namespace / ConfigMap vs Secret; labels + selectors; ClusterIP vs NodePort/LoadBalancer/Ingress, port vs targetPort vs containerPort, port-forward; imagePullPolicy + registries; liveness vs readiness (restart vs stop traffic) and why liveness waits longer; rolling update / zero downtime; self-healing; scaling consumers vs partitions (rebalance, idle extra pods); why a scheduled outbox publisher can't simply be scaled (SKIP LOCKED / ShedLock / leader election); stateful DB on K8s (StatefulSet + PV vs managed DB).
+- M8: sync vs async calls; cascading failure; timeouts (connect vs read) first; circuit breaker states + thresholds (window, min calls, failure rate, wait, half-open calls); fallback + fail closed vs fail open; `CallNotPermittedException`; breaker vs retry (retry a few times inside, breaker around); bulkhead / rate limiter (theory); AOP proxy (same as @Transactional, self-invocation trap); which service owns which data; ClusterIP Service needed only for services that are called.
 - M7: what CI is (vs CD); workflow/job/step/runner; triggers push vs pull_request; `needs` + matrix (parallel fan-out); dependency caching; Testcontainers in CI (runner has Docker); tag images with commit SHA not `latest`; build context; branch protection / required checks; `--auto` vs `--admin` merge; next steps: push to a registry (GHCR) = CD.
 - M3: topic/partition/offset/consumer group; key → partition ordering; `auto-offset-reset`; at-least-once + idempotency; event vs DTO; why consumers own their copy of the event (`__TypeId__`); dual-write problem; eventual consistency; WAR-in-Tomcat vs embedded server; mock vs pure logic; `verify` for side effects; varargs.
 
