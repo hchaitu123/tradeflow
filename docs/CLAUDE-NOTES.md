@@ -5,10 +5,11 @@ Session 1 detail: see `session-01-setup.md`.
 
 ---
 
-## Current state (as of Wed 18 Nov 2026, evening)
+## Current state (as of Thu 19 Nov 2026)
 
-- `m1`–`m5` tagged on `main`. Branch `m6-k8s`: M6 complete (manifests in `k8s/`), to merge + tag `m6`.
-- **Also runs on Kubernetes** (Docker Desktop, kubeadm): `kubectl apply -f k8s/` → namespace `tradeflow`, postgres, kafka, order-service (+ Service), risk-service ×2, notification-service. Mac access via `kubectl port-forward -n tradeflow svc/order-service 8090:8080`.
+- `m1`–`m6` tagged on `main`. **M7 (CI) merged** (PR #1 workflow, PR #2 README badge); tag `m7` to add.
+- **CI:** `.github/workflows/ci.yml` on push to main + every PR → job `build` (`./mvnw -B verify`, Java 21 temurin, maven cache, Testcontainers works on ubuntu-latest) → job `docker` (`needs: build`, matrix of 3 services, `docker build --build-arg SERVICE=… -t tradeflow/<svc>:<sha> .`, build only, no push). Ruleset `protect-main`: PR required (0 approvals), all 4 checks required, no force push/deletion.
+- **Also runs on Kubernetes** (Docker Desktop, kubeadm): `kubectl apply -f k8s/` → namespace `tradeflow`, postgres, kafka, order-service (+ Service), risk-service ×2, notification-service. Mac access: order-service Service `type: LoadBalancer` → `localhost:8090` (→ pod 8080).
 - Revision (Tue 17) paused after M3 block; M4 block Qs posted, M5 block + re-test still owed. Weak list: `docs/revision-weak-list.md`.
 - Flow: `POST /orders` → order + `outbox_events` row in **one txn** → `OutboxPublisher` (@Scheduled 1 s) → `orders.created` → risk-service → `orders.risk-decided` → order-service (dedupe by eventId → approve/reject) **and** notification-service (own group → log "📩 Notify"). Failures → `orders.risk-decided.DLT`.
 - **Everything runs in Docker:** `docker compose up -d --build` → postgres (5433), kafka (9092 Mac / 29092 containers), order-service (8080), risk-service, notification-service. One trace id across all 3 apps in logs.
@@ -201,6 +202,13 @@ Not building: UI, market data, matching, payments, auth (until M8), market order
 - **D/E:** order-service ConfigMap (`SPRING_DATASOURCE_URL=…postgres:5432…`, `SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:29092`, profile dev) via `envFrom.configMapRef`; Service 8080. Consumers share one `kafka-config` ConfigMap and have **no Service** (nobody calls them). `kubectl port-forward … 8090:8080` (8080 busy by IntelliJ). Orders 1 (AAPL → REJECTED, not whitelisted) and 2 (INFY → APPROVED) end-to-end in the cluster; same trace id across 3 services.
 - **F:** readiness (10 s / 5 s) + liveness (30 s / 10 s / 3 fails) on `/actuator/health/{readiness,liveness}`; bug: livenessProbe indented under readinessProbe. Apply → **rolling update** (new pod ready → old removed; pod-name hash = template version). `replicas: 2` on risk → rebalance: `[0,1]` + `[2]`. order-service **not** scaled: each pod's `OutboxPublisher` would send the same unsent rows (needs SKIP LOCKED / ShedLock).
 
+### M7 — Thu 19 Nov — CI with GitHub Actions
+- Explained CI as a **robot / security guard at the door of main**: fresh Linux machine per run → checkout → setup-java → `./mvnw -B verify`. Words: workflow, `on:`, job, runner, step (`run:` vs `uses:`).
+- Blanks round 1: wrote `ubuntu-linux` (→ `ubuntu-latest`; unknown runner label = job queues forever) and `cache: ./mvnw` (→ `cache: maven`, it's the tool name). Noted `push: [main]` alone doesn't run on a feature branch — the `pull_request` trigger does.
+- First run green: 19 tests (15 order + 4 risk), Testcontainers pulled kafka + postgres on the runner, 37 s Maven / 45 s job.
+- Docker job: `needs` = **relay baton**, `matrix` = **photocopier** (one job, 3 parallel copies). Bug: `--build-arg service=` lowercase → `ARG SERVICE` empty → `COPY /src` fails; build args are case-sensitive. Explained build context `.`, `-t name:${{ github.sha }}` (commit id beats `latest`), `run: >` folding. User asked for a slow walk-through of the docker build line → **recipe card with one blank** analogy, unrolled the matrix into 3 real commands, compared with compose `build.context/args/image`.
+- Branch protection via ruleset; README created on main by mistake (staged, not committed) → moved with `git checkout -b`. `gh pr merge` while checks pending → "base branch policy prohibits the merge" ✅; explained `--auto` (merge when green) vs `--admin` (bypass — don't).
+
 ### Roadmap additions (agreed Sat 14 Nov) — to close microservices interview gaps
 - **M5:** Micrometer Tracing — one trace id across order → risk → order (Kafka headers), visible in logs.
 - **M8:** small **account-service** (`GET /accounts/{id}/limit`); risk-service calls it over REST, wrapped in a Resilience4j **circuit breaker** (gives M8 a real sync call to protect).
@@ -255,6 +263,9 @@ Not building: UI, market data, matching, payments, auth (until M8), market order
 - YAML indentation = ownership: a probe indented one level too far becomes a child of the other probe.
 - Editing a ConfigMap does **not** restart pods; `kubectl rollout restart deploy/<name>`.
 - `port-forward` attaches to one pod; it dies when that pod is replaced.
+- GitHub Actions: `runs-on` must be a real label (`ubuntu-latest`); `setup-java cache:` takes `maven`, not a command. Workflow must live exactly in `.github/workflows/`.
+- Docker `--build-arg` names are case-sensitive; an unknown arg is only a warning, the real `ARG` stays empty.
+- Uncommitted changes follow you across `git checkout -b` — easy fix for "edited on main by mistake".
 
 ---
 
@@ -297,6 +308,7 @@ Not building: UI, market data, matching, payments, auth (until M8), market order
 - M4: transient vs permanent errors; retry + backoff; DLT + its headers; head-of-line blocking; poison pill; idempotent consumer (dedupe table, same txn); replay via offset reset (Kafka = log, not queue); invariants in the entity; Testcontainers + `@ServiceConnection`; Awaitility vs `Thread.sleep`; shaded/internal imports.
 - M5: dual-write + transactional outbox (polling vs CDC, at-least-once, SKIP LOCKED); fan-out with consumer groups / loose coupling; trace vs span, `traceparent` over Kafka headers, async hand-off breaks traces; multi-stage Dockerfile, JDK vs JRE, image vs container, `-DskipTests` in image builds; container networking (localhost, service-name DNS, port mapping); Kafka advertised listeners; env vars overriding Spring config; `depends_on` vs readiness.
 - M6: Docker vs Kubernetes; pod / Deployment / ReplicaSet / Service / namespace / ConfigMap vs Secret; labels + selectors; ClusterIP vs NodePort/LoadBalancer/Ingress, port vs targetPort vs containerPort, port-forward; imagePullPolicy + registries; liveness vs readiness (restart vs stop traffic) and why liveness waits longer; rolling update / zero downtime; self-healing; scaling consumers vs partitions (rebalance, idle extra pods); why a scheduled outbox publisher can't simply be scaled (SKIP LOCKED / ShedLock / leader election); stateful DB on K8s (StatefulSet + PV vs managed DB).
+- M7: what CI is (vs CD); workflow/job/step/runner; triggers push vs pull_request; `needs` + matrix (parallel fan-out); dependency caching; Testcontainers in CI (runner has Docker); tag images with commit SHA not `latest`; build context; branch protection / required checks; `--auto` vs `--admin` merge; next steps: push to a registry (GHCR) = CD.
 - M3: topic/partition/offset/consumer group; key → partition ordering; `auto-offset-reset`; at-least-once + idempotency; event vs DTO; why consumers own their copy of the event (`__TypeId__`); dual-write problem; eventual consistency; WAR-in-Tomcat vs embedded server; mock vs pure logic; `verify` for side effects; varargs.
 
 ---
