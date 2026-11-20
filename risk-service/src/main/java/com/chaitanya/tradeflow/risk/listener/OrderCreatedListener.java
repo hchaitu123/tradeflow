@@ -1,5 +1,6 @@
 package com.chaitanya.tradeflow.risk.listener;
 
+import com.chaitanya.tradeflow.risk.client.AccountClient;
 import com.chaitanya.tradeflow.risk.event.OrderCreatedEvent;
 import com.chaitanya.tradeflow.risk.event.RiskDecidedEvent;
 import com.chaitanya.tradeflow.risk.rules.RiskDecision;
@@ -9,7 +10,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
-import org.springframework.stereotype.Controller;
+
+import java.math.BigDecimal;
 
 @Component
 public class OrderCreatedListener {
@@ -19,17 +21,21 @@ public class OrderCreatedListener {
 
     private final RiskRules riskRules;
     private final KafkaTemplate<String, Object> kafkaTemplate;
+    private final AccountClient accountClient;
 
-    public OrderCreatedListener(RiskRules riskRules, KafkaTemplate<String, Object> kafkaTemplate) {
+    public OrderCreatedListener(RiskRules riskRules, KafkaTemplate<String, Object> kafkaTemplate,
+                                AccountClient accountClient) {
         this.riskRules = riskRules;
         this.kafkaTemplate = kafkaTemplate;
+        this.accountClient = accountClient;
     }
 
     @KafkaListener(topics = "orders.created")
     public void onOrderCreated(OrderCreatedEvent event) {
         log.info("Received order {} for account {} with {} items",
                 event.orderId(), event.accountId(), event.items().size());
-        RiskDecision decision = riskRules.evaluate(event);
+        BigDecimal limit = accountClient.getMaxOrderValue(event.accountId());      // ⑧ which field of the event?
+        RiskDecision decision = riskRules.evaluate(event, limit);
         kafkaTemplate.send(RISK_DECIDED_TOPIC, String.valueOf(event.orderId()),
                 RiskDecidedEvent.from(event.orderId(), decision));
         log.info("Order {} → {} {}", event.orderId(),

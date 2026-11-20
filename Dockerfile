@@ -9,6 +9,7 @@ COPY .mvn .mvn
 COPY order-service/pom.xml order-service/
 COPY risk-service/pom.xml risk-service/
 COPY notification-service/pom.xml notification-service/
+COPY account-service/pom.xml account-service/
 COPY ${SERVICE}/src ${SERVICE}/src
 
 # cache mount = keep ~/.m2 between builds, so dependencies aren't re-downloaded each time

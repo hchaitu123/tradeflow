@@ -54,8 +54,10 @@ services:
     container_name: tradeflow-risk-service
     environment:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      ACCOUNT_SERVICE_URL: http://account-service:8083     # ⑤ the house name on the street
     depends_on:
       - kafka
+      - account-service
     restart: on-failure
 
   notification-service:
@@ -69,6 +71,16 @@ services:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
     depends_on:
       - kafka
+    restart: on-failure
+  account-service:
+    build:
+      context: .
+      args:
+        SERVICE: account-service                     # ③
+    image: tradeflow/account-service
+    container_name: tradeflow-account-service
+    ports:
+      - "8083:8083"                       # ④ a gate so you can curl it from the Mac
     restart: on-failure
 
 volumes:

@@ -53,4 +53,12 @@ class RiskRulesTest {
         assertTrue(d.reason().contains("exceeds limit"));    // after line 51
     }
 
+    @Test
+    void rejects_whenOverAccountLimit() {
+        // INFY 50 × 1500 = 75,000 → fine for the ₹10L rule, too much for a ₹50,000 account
+        RiskDecision d = rules.evaluate(eventWith(item("INFY", 50, "1500.00")), new BigDecimal("50000"));  // ①
+        assertFalse(d.approved());                                                                              // ②
+        assertTrue(d.reason().contains("exceeds account limit"));
+    }
+
 }

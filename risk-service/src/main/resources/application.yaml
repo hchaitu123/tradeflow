@@ -1,5 +1,7 @@
 server:
   port: 8081
+account-service:
+  url: http://account-service:8083          # ② account-service's port
 spring:
   application:
     name: risk-service
@@ -21,6 +23,10 @@ spring:
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JacksonJsonSerializer
+  http:
+    clients:
+      connect-timeout: 1s     # give up if we can't even reach it in 1 s
+      read-timeout: 2s        # give up if it's connected but doesn't answer in 2 s
 management:
   tracing:
     sampling:
@@ -33,3 +39,21 @@ management:
     health:
       probes:
         enabled: true
+  endpoints:                     # ← new (2 spaces, same level as endpoint:)
+    web:
+      exposure:
+        include: health,circuitbreakers,circuitbreakerevents
+  health:                        # ← new
+    circuitbreakers:
+      enabled: true
+resilience4j:                    # ← new, NO indent (top level)
+  circuitbreaker:
+    instances:
+      account:
+        sliding-window-size: 5
+        minimum-number-of-calls: 3
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 2
+        automatic-transition-from-open-to-half-open-enabled: true
+        register-health-indicator: true

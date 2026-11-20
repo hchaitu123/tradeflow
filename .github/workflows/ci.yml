@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        service: [ order-service, risk-service, notification-service ] # ② our 3 service folder names
+        service: [ order-service, risk-service, notification-service, account-service ] # ② our 3 service folder names
     steps:
       - uses: actions/checkout@v4
 
